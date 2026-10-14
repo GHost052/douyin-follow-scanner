@@ -1,0 +1,21 @@
+[package]
+name = "douyin-follow-cleaner"
+version = "1.0.0"
+edition = "2024"
+description = "抖音关注清理助手 —— 轻量原生桌面应用（Rust + 系统 WebView2）"
+license = "MIT"
+
+[dependencies]
+serde_json = "1.0.151"
+tao = "0.37.1"
+tungstenite = "0.30.0"
+wry = "0.57.0"
+
+# 以体积为最优先：优化尺寸、LTO、单编译单元、去符号
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+incremental = false

@@ -1,0 +1,12 @@
+# 统一换行符处理，避免跨平台协作时出现整文件 diff
+# .bat 例外：Windows 批处理需要 CRLF，否则某些情况下会执行异常
+* text=auto eol=lf
+
+# 二进制文件不做转换
+*.bat text eol=crlf
+
+# 二进制文件不做转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.db binary

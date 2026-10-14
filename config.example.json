@@ -1,0 +1,32 @@
+{
+  "// 说明": "复制本文件为 config.json，放在 exe 同级目录即可覆盖默认值。所有字段都有默认值，可只写需要覆盖的部分。",
+
+  "// outDir": "数据目录（数据库 / 报告 / 登录态）。相对路径基于 exe 所在目录",
+  "outDir": "./data",
+
+  "// staleDays": "最新作品距今超过多少天算作「未更新」",
+  "staleDays": 60,
+
+  "// speed": "速度档位：conservative（保守，最慢最安全）/ standard（标准，推荐）/ fast（快速，风险较高）",
+  "speed": "standard",
+
+  "// recheckHours": "已检查过的账号在多少小时内不重复检查。用于「停止扫描后再开始」时接着走，而不是从头重查",
+  "recheckHours": 24,
+
+  "browser": {
+    "// channel": "使用系统已安装的浏览器内核，可选 'msedge' / 'chrome'。程序会自动查找安装路径",
+    "channel": "msedge",
+    "// headless": "true = 后台无窗口运行（推荐）。首次登录会自动改用弹窗模式让你扫码",
+    "headless": true
+  },
+
+  "retry": {
+    "// maxRetry": "所有重试环节的最大次数，超过即停止本轮（进度会保存）",
+    "maxRetry": 3,
+    "// retryWaitSec": "账号检查命中风控后每次重试前等待的秒数。风控恢复期较长，实测 2 分钟不够",
+    "retryWaitSec": 1800
+  },
+
+  "// port": "界面服务端口。被占用时会自动往后找（最多试 20 个），一般不用改",
+  "port": 8799
+}

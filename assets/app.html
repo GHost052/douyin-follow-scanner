@@ -1,0 +1,1047 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>抖音关注清理助手</title>
+<style>
+  :root{
+    --bg:#ffffff; --soft:#f7f8fa; --line:#ebedf0; --text:#1f2328; --sub:#6b7280; --hint:#9aa4b2;
+    --accent:#2f6feb; --red:#e5484d; --green:#16a34a; --gray:#8b949e; --amber:#d97706;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;}
+  button{font-family:inherit;font-size:14px;cursor:pointer;border-radius:8px;border:1px solid var(--line);
+    background:#fff;color:var(--text);padding:9px 18px;transition:background .15s;}
+  button:hover{background:var(--soft);}
+  button:disabled{opacity:.45;cursor:not-allowed;}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500;}
+  button.primary:hover{background:#2560d4;}
+  button.danger{color:var(--red);border-color:#f3d4d4;}
+  button.danger:hover{background:#fdf3f3;}
+  input,select{font-family:inherit;font-size:14px;padding:8px 12px;border:1px solid var(--line);
+    border-radius:8px;background:#fff;color:var(--text);}
+  a{color:var(--accent);text-decoration:none;}
+
+  header{position:sticky;top:0;z-index:10;background:rgba(255,255,255,.94);backdrop-filter:blur(6px);
+    border-bottom:1px solid var(--line);}
+  .head{max-width:1240px;margin:0 auto;padding:14px 24px 0;display:flex;align-items:center;gap:10px;}
+  .head h1{font-size:15px;font-weight:500;margin:0;}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--gray);flex:none;}
+  .dot.running{background:var(--green);animation:pulse 1.4s infinite;}
+  .dot.waiting{background:var(--amber);animation:pulse 1.4s infinite;}
+  .dot.error{background:var(--red);}
+  .dot.done{background:var(--accent);}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .head .st{margin-left:auto;font-size:12.5px;color:var(--sub);}
+  nav{max-width:1240px;margin:0 auto;padding:10px 24px 0;display:flex;gap:4px;}
+  nav button{border:none;background:none;color:var(--sub);padding:8px 14px;border-radius:8px;font-size:14px;}
+  nav button:hover{background:var(--soft);}
+  nav button.on{color:var(--text);background:var(--soft);font-weight:500;}
+
+  /* 默认单栏；打开日志后变成「内容 + 右侧日志栏」 */
+  main{max-width:1240px;margin:0 auto;padding:28px 24px 80px;
+    display:grid;grid-template-columns:minmax(0,1fr);gap:0;align-items:start;}
+  main.withlog{grid-template-columns:minmax(0,1fr) 380px;gap:24px;}
+  .content{order:1;min-width:0;}
+  .side{order:2;position:sticky;top:76px;display:none;}
+  main.withlog .side{display:block;}
+  .sidebox{border:1px solid var(--line);border-radius:12px;padding:14px 16px;}
+  .sidebox h3{margin:0 0 10px;font-size:13px;font-weight:600;color:var(--sub);}
+  .side .log{max-height:calc(100vh - 180px);overflow:auto;margin-top:0;}
+  @media (max-width:1100px){
+    main.withlog{grid-template-columns:minmax(0,1fr);gap:0;}
+    main.withlog .side{position:static;display:block;margin-top:20px;}
+    .side .log{max-height:260px;}
+  }
+  .view{display:none;}
+  .view.on{display:block;}
+
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px;}
+  .stat{padding:20px 20px;border:1px solid var(--line);border-radius:14px;}
+  .stat .k{color:var(--sub);font-size:12.5px;margin-bottom:10px;}
+  .stat .v{font-size:30px;font-weight:500;font-variant-numeric:tabular-nums;line-height:1;}
+  .stat.s .v{color:var(--red);}
+  .stat.a .v{color:var(--green);}
+
+  .rowline{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  .muted{color:var(--sub);font-size:13px;}
+
+  .progressbox{margin-top:22px;padding:18px 20px;border:1px solid var(--line);border-radius:14px;background:var(--soft);}
+  .bar{height:10px;background:#e8eaee;border-radius:6px;overflow:hidden;margin:14px 0 12px;}
+  .bar > i{display:block;height:100%;width:0;background:var(--accent);transition:width .4s ease;}
+  .kv{display:flex;gap:24px;flex-wrap:wrap;font-size:13px;color:var(--sub);}
+  .kv b{color:var(--text);font-weight:500;font-variant-numeric:tabular-nums;}
+  .banner{display:none;margin-top:14px;padding:11px 14px;border-radius:10px;background:#fff8ec;
+    border:1px solid #f5e2c0;color:#8a5a00;font-size:13px;}
+
+  .sep{height:1px;background:var(--line);margin:34px 0 26px;}
+
+  .tabs{display:flex;gap:4px;margin-bottom:16px;align-items:center;}
+  .tabs .spacer{flex:1;}
+  .tabs .tlink{border:none;background:none;color:var(--accent);padding:8px 10px;border-radius:8px;font-size:13px;}
+  .tabs .tlink:hover{background:var(--soft);}
+  .tabs button{border:none;background:none;color:var(--sub);padding:8px 14px;border-radius:8px;}
+  .tabs button.on{color:var(--text);background:var(--soft);font-weight:500;}
+  .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:14px;}
+  .toolbar input{flex:1;}
+  .tablewrap{border:1px solid var(--line);border-radius:14px;overflow:hidden;}
+  table{width:100%;border-collapse:collapse;table-layout:fixed;}
+  th,td{padding:11px 16px;text-align:left;font-size:13.5px;border-bottom:1px solid #f4f5f7;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  th{background:var(--soft);color:var(--sub);font-weight:500;font-size:12.5px;}
+  tr:last-child td{border-bottom:none;}
+  td.name{font-weight:500;}
+  td.id{color:var(--sub);font-size:12.5px;font-family:ui-monospace,Consolas,monospace;}
+  td.num{font-variant-numeric:tabular-nums;}
+  td.days{color:var(--red);font-weight:500;text-align:right;}
+  .empty{padding:40px;text-align:center;color:var(--hint);font-size:13px;white-space:normal;}
+
+  details{border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin-top:22px;}
+  details summary{cursor:pointer;font-size:13.5px;color:var(--sub);}
+  .log{max-height:320px;overflow:auto;margin-top:12px;font-family:ui-monospace,Consolas,monospace;font-size:12px;}
+  .log div{padding:3px 0;color:#4b5563;}
+  .log div .t{color:var(--hint);margin-right:8px;}
+  .log div.warn{color:var(--amber);}
+  .log div.err{color:var(--red);}
+  .log div.ok{color:var(--green);}
+  /* 双柄滑杆：两个 range 叠在一条轨道上，视觉上是一个滑杆两个手柄 */
+  .dual{position:relative;height:26px;width:210px;flex:none;}
+  .dual .track{position:absolute;top:11px;left:0;right:0;height:4px;background:var(--line);border-radius:2px;}
+  .dual .fill{position:absolute;top:11px;height:4px;background:var(--accent);border-radius:2px;}
+  .dual input[type=range]{position:absolute;top:0;left:0;width:100%;height:26px;margin:0;
+    background:none;appearance:none;-webkit-appearance:none;pointer-events:none;}
+  .dual input[type=range]:focus{outline:none;}
+  .dual input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;pointer-events:auto;
+    width:15px;height:15px;border-radius:50%;background:#fff;border:2px solid var(--accent);
+    cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.18);margin-top:0;}
+  .dual input[type=range]::-moz-range-thumb{pointer-events:auto;width:13px;height:13px;border-radius:50%;
+    background:#fff;border:2px solid var(--accent);cursor:pointer;}
+
+  .field{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:16px 0;border-bottom:1px solid #f4f5f7;}
+  .field:last-of-type{border-bottom:none;}
+  .field .lab{font-size:14px;}
+  .field .desc{color:var(--sub);font-size:12.5px;margin-top:4px;}
+  .field .ctl{flex:none;}
+  .note{color:var(--sub);font-size:12.5px;}
+  .warnbox{margin-top:26px;padding:16px 18px;border-radius:12px;background:#fff8f8;border:1px solid #f5d9d9;}
+  .warnbox p{margin:0 0 8px;font-size:13px;color:#8a3b3b;line-height:1.7;}
+  .warnbox p:last-child{margin-bottom:0;}
+</style>
+</head>
+<body>
+<header>
+  <div class="head">
+    <span class="dot" id="dot"></span>
+    <h1>抖音关注清理助手</h1>
+    <button id="logToggle" onclick="toggleLog()" title="显示 / 隐藏运行日志"
+      style="margin-left:auto;font-size:12.5px;padding:5px 10px">运行日志</button>
+    <span class="st" id="stText" style="margin-left:10px">加载中…</span>
+  </div>
+  <nav>
+    <button data-v="main" class="on">主页</button>
+    <button data-v="settings">设置</button>
+  </nav>
+</header>
+
+<main>
+  <aside class="side">
+    <div class="sidebox">
+      <h3>运行日志</h3>
+      <div class="log" id="log"></div>
+    </div>
+  </aside>
+  <div class="content">
+  <section class="view on" id="v-main">
+    <div class="stats">
+      <div class="stat"><div class="k">关注账号总数</div><div class="v" id="hTotal">—</div></div>
+      <div class="stat s"><div class="k">超过 <span id="hDays">60</span> 天未更新</div><div class="v" id="hStale">—</div></div>
+      <div class="stat a"><div class="k">正常更新</div><div class="v" id="hActive">—</div></div>
+      <div class="stat"><div class="k">未检查</div><div class="v" id="hPending">—</div></div>
+    </div>
+
+    <div class="rowline">
+      <button class="primary" id="btnStart" onclick="startScan()">开始扫描</button>
+      <button id="btnLogin" onclick="doLogin()">登录抖音</button>
+      <span class="muted" id="loginState">登录状态未检测</span>
+      <span class="muted" id="lastScan"></span>
+    </div>
+
+    <div class="progressbox" id="progressBox" style="display:none">
+      <div class="rowline">
+        <button id="btnPause" onclick="pauseScan()">暂停</button>
+        <button id="btnResume" onclick="resumeScan()" style="display:none">继续</button>
+        <button class="danger" id="btnStop" onclick="stopScan()">停止</button>
+        <span class="muted" id="phaseText"></span>
+      </div>
+      <div class="bar"><i id="bar"></i></div>
+      <div class="kv">
+        <span>进度 <b id="sProgress">0 / 0</b></span>
+        <span>当前 <b id="sCurrent">—</b></span>
+        <span>速度 <b id="sRate">—</b></span>
+        <span>预计剩余 <b id="sEta">—</b></span>
+        <span>已用时 <b id="sElapsed">—</b></span>
+      </div>
+      <div class="kv" style="margin-top:12px">
+        <span>停更 <b id="sStale" style="color:var(--red)">0</b></span>
+        <span>正常 <b id="sActive" style="color:var(--green)">0</b></span>
+        <span>异常 <b id="sError">0</b></span>
+      </div>
+      <div class="banner" id="banner"></div>
+    </div>
+
+    <div class="sep"></div>
+
+    <div class="tabs">
+      <button data-t="stale" class="on" onclick="setType('stale')">超期未更新</button>
+      <button data-t="error" onclick="setType('error')">异常账号</button>
+      <button data-t="pending" onclick="setType('pending')">未检查</button>
+      <button data-t="all" onclick="setType('all')">全部账号</button>
+      <span class="spacer"></span>
+      <button class="tlink" onclick="exportCsv()">导出 CSV</button>
+      <a class="tlink" href="#" onclick="openReport();return false;">完整报告</a>
+    </div>
+    <div class="toolbar">
+      <input id="q" placeholder="搜索昵称或账号ID…" oninput="renderResults()" />
+      <label id="hideUnfWrap" style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;white-space:nowrap;color:var(--sub)">
+        <input type="checkbox" id="hideUnf" onchange="toggleHideUnfollowed(this.checked)" style="width:auto;padding:0">
+        <span id="hideUnfLabel">隐藏已取关</span>
+      </label>
+      <span id="selCount" style="font-size:13px;color:var(--accent);font-weight:600;display:none;padding:0 4px"></span>
+      <button id="selOpened" onclick="selectOpened()" style="display:none;font-size:13px;padding:9px 8px" title="把当前列表里「已开过」的账号全部勾上">选中已开过的</button>
+      <button id="selClear" onclick="clearSel()" style="display:none;font-size:13px;padding:9px 8px">清空选择</button>
+      <button id="openAllBtn" onclick="openAllHomepages()" style="display:none">打开选中主页</button>
+      <button id="openAllStopBtn" onclick="stopOpenAll()" style="display:none;font-size:13px;padding:9px 8px">停止</button>
+      <button onclick="refreshResults()" title="重新读取列表与标记">刷新</button>
+
+    </div>
+    <!-- 按距今天数批量勾选 -->
+    <div id="dayPick" style="display:none;align-items:center;gap:10px;font-size:12.5px;color:var(--sub);margin-bottom:12px;flex-wrap:wrap">
+      <span>按距今天数批量勾选：</span>
+      <!-- 一个滑杆两个手柄：左右各拖一个 -->
+      <div class="dual">
+        <div class="track"></div>
+        <div class="fill" id="dayFill"></div>
+        <input type="range" id="dayMin" min="0" max="365" value="0" oninput="syncDayLabel()" />
+        <input type="range" id="dayMax" min="0" max="365" value="365" oninput="syncDayLabel()" />
+      </div>
+      <span><b id="dayMinVal" style="color:var(--text)">0</b> ~ <b id="dayMaxVal" style="color:var(--text)">365</b> 天</span>
+      <span id="dayMatch" style="color:var(--accent);font-weight:600"></span>
+      <button onclick="selectByDays()" style="font-size:12.5px;padding:5px 10px">勾选此范围</button>
+    </div>
+
+    <!-- 取关进度弹窗 -->
+    <div id="ufModal" style="display:none;position:fixed;inset:0;background:rgba(17,24,39,.4);z-index:200;align-items:center;justify-content:center">
+      <div style="background:#fff;border-radius:14px;padding:22px 24px;width:440px;max-width:92vw;box-shadow:0 14px 44px rgba(0,0,0,.22)">
+        <div style="font-size:15px;font-weight:600;margin-bottom:14px">一键取关</div>
+        <div id="ufmStatus" style="font-size:13.5px;margin-bottom:10px">准备中…</div>
+        <div style="height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-bottom:14px">
+          <div id="ufmBar" style="height:100%;width:0;background:var(--accent);transition:width .3s"></div>
+        </div>
+        <div id="ufmDetail" style="font-size:12.5px;color:var(--sub);line-height:1.9;margin-bottom:18px"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button id="ufmStop" onclick="stopUnfollow()">停止</button>
+          <button id="ufmClose" onclick="closeUfModal()">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 取关：不可逆操作，只在「超期未更新」分类显示 -->
+    <div class="rowline" id="unfollowBar" style="display:none;margin-bottom:14px;align-items:flex-start">
+      <div style="flex:1;min-width:220px">
+        <div style="font-size:13.5px;font-weight:600">一键取关
+          <span id="ufStatus" style="font-weight:400;color:var(--sub);margin-left:6px"></span>
+        </div>
+        <div id="ufHint" style="font-size:12px;color:var(--sub);margin-top:4px;line-height:1.6"></div>
+      </div>
+      <button class="danger" id="ufRun" onclick="startUnfollow()">取关…</button>
+      <button id="ufStop" onclick="stopUnfollow()" style="display:none">停止</button>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead id="thead"></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+
+  </section>
+
+  <section class="view" id="v-settings">
+    <div class="field">
+      <div><div class="lab">超期阈值（天）</div><div class="desc">最新作品距今超过多少天算作"未更新"</div></div>
+      <div class="ctl"><input id="setDays" type="number" min="1" max="3650" style="width:110px" /></div>
+    </div>
+    <div class="field">
+      <div><div class="lab">扫描速度</div><div class="desc">越慢越不容易触发抖音风控</div></div>
+      <div class="ctl"><select id="setSpeed"></select></div>
+    </div>
+    <div class="field">
+      <div><div class="lab">取关请求录制</div>
+        <div class="desc">一键取关依赖这条录制下来的请求。抖音改版或长时间未用后可能失效，重新录制即可。<br>点下去会打开一个账号主页，请手动点一次「已关注 → 取消关注」。</div>
+        <div class="desc" id="ufTplInfo" style="margin-top:6px"></div>
+      </div>
+      <div class="ctl"><button id="ufCapture" onclick="captureUnfollow()">录制取关请求</button></div>
+    </div>
+    <div class="field">
+      <div><div class="lab">数据目录</div><div class="desc">数据库与报告都保存在这里</div></div>
+      <div class="ctl"><span class="note" id="setDir">—</span></div>
+    </div>
+    <div class="rowline" style="margin-top:22px"><button class="primary" onclick="saveSettings()">保存设置</button></div>
+
+    <div class="warnbox">
+      <p><b>使用须知与免责声明</b></p>
+      <p>本工具通过浏览器自动化读取你自己的抖音关注列表，仅用于个人整理关注列表。所有数据只保存在你的电脑本地，不会上传到任何服务器。</p>
+      <p>自动化访问可能违反抖音用户协议，也可能触发风控（临时限制接口、要求验证码等）。请保持默认的"保守"速度，不要高频使用。使用风险由使用者自行承担。</p>
+      <p><b>关于取关：</b>本工具提供「一键取关」，它会用你自己录制的请求批量取消关注，属于不可逆操作。请务必先用 1 个账号验证效果，再考虑批量；批量时建议每次 20~50 个、分多天进行。取关频率过高可能触发风控，风险由使用者自行承担。</p>
+    </div>
+    <div class="field">
+      <div><div class="lab">从零开始</div><div class="desc">清空所有扫描数据、报告、列表缓存与设置，回到初始状态</div></div>
+      <div class="ctl"><button class="danger" onclick="clearData()">清空所有数据</button></div>
+    </div>
+    <div class="field" style="border-bottom:none">
+      <div><div class="lab">同时清除登录状态</div><div class="desc">勾选后下次使用需要重新扫码登录</div></div>
+      <div class="ctl"><input type="checkbox" id="clearLogin" style="width:16px;height:16px;padding:0" /></div>
+    </div>
+  </section>
+  </div>
+</main>
+
+<script>
+let S = {}, TYPE = 'stale', ROWS = [];
+
+const STATUS_TEXT = {
+  idle:'空闲', running:'扫描中', paused:'已暂停', waiting:'等待中',
+  done:'已完成', stopped:'已停止', error:'出错了', need_login:'需要登录', starting:'启动中'
+};
+
+function fmtDur(s){
+  if(s==null) return '—';
+  s = Math.max(0, Math.floor(s));
+  const h = Math.floor(s/3600), m = Math.floor(s%3600/60), ss = s%60;
+  if(h) return h+'时'+m+'分';
+  if(m) return m+'分'+ss+'秒';
+  return ss+'秒';
+}
+function esc(t){return (t==null?'':String(t)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>showView(b.dataset.v));
+function showView(v){
+  document.querySelectorAll('nav button').forEach(b=>b.className = b.dataset.v===v?'on':'');
+  document.querySelectorAll('.view').forEach(s=>s.className = 'view' + (s.id==='v-'+v?' on':''));
+  if(v==='main') loadResults();
+  if(v==='settings') fillSettings();
+}
+
+async function api(path, method, body){
+  // 桌面版会注入 __TOKEN__，本地接口要求带上它（挡住跨站请求）
+  const opts = { method: method || 'GET', headers: {} };
+  if (window.__TOKEN__) opts.headers['X-Token'] = window.__TOKEN__;
+  if(body){ opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+  const r = await fetch(path, opts);
+  try { return await r.json(); } catch(e){ return {}; }
+}
+
+function render(){
+  const sc = S.scan || {}, sm = S.summary || {}, lg = S.login || {}, st = sc.status || 'idle';
+  const dot = document.getElementById('dot');
+  dot.className = 'dot ' + (st==='running'?'running':st==='waiting'||st==='paused'?'waiting':st==='error'||st==='need_login'?'error':st==='done'||st==='stopped'?'done':'');
+
+  let txt = STATUS_TEXT[st] || st;
+  document.getElementById('stText').textContent = txt;
+
+  document.getElementById('hTotal').textContent = sm.total ?? '—';
+  document.getElementById('hStale').textContent = sm.stale ?? '—';
+  document.getElementById('hActive').textContent = sm.active ?? '—';
+  document.getElementById('hPending').textContent = sm.pending ?? '—';
+  document.getElementById('hDays').textContent = (S.settings||{}).staleDays ?? 60;
+  document.getElementById('lastScan').textContent = sm.lastScanAt
+    ? '上次扫描 ' + new Date(sm.lastScanAt).toLocaleString('zh-CN') : '尚未扫描过';
+
+  const ls = document.getElementById('loginState');
+  if(lg.logging) ls.textContent = '正在等待扫码…';
+  else if(lg.loggedIn === true) ls.textContent = '已登录';
+  else if(lg.loggedIn === false) ls.textContent = '未登录';
+  else ls.textContent = '登录状态未检测';
+
+  const busy = st==='running' || st==='waiting' || st==='paused';
+  document.getElementById('btnStart').disabled = busy;
+  document.getElementById('btnStart').textContent = busy ? '扫描中…' : '开始扫描';
+  document.getElementById('btnLogin').disabled = busy || lg.logging;
+
+  const box = document.getElementById('progressBox');
+  const showBox = busy || st==='done' || st==='error' || sc.checked > 0;
+  box.style.display = showBox ? 'block' : 'none';
+  if(showBox){
+    document.getElementById('btnPause').style.display = (st==='running') ? '' : 'none';
+    document.getElementById('btnResume').style.display = (st==='paused') ? '' : 'none';
+    document.getElementById('btnStop').disabled = !busy;
+    document.getElementById('phaseText').textContent = sc.phase || '';
+    const pct = sc.total ? (sc.checked/sc.total*100) : 0;
+    document.getElementById('bar').style.width = Math.min(100,pct).toFixed(1)+'%';
+    document.getElementById('sProgress').textContent = (sc.checked||0) + ' / ' + (sc.total||0);
+    document.getElementById('sCurrent').textContent = sc.currentAccount || '—';
+    document.getElementById('sRate').textContent = sc.rate ? sc.rate.toFixed(2)+' 个/秒' : '—';
+    document.getElementById('sEta').textContent = fmtDur(sc.etaSeconds);
+    document.getElementById('sElapsed').textContent = sc.startedAt ? fmtDur((Date.now()-sc.startedAt)/1000) : '—';
+    document.getElementById('sStale').textContent = sc.stale||0;
+    document.getElementById('sActive').textContent = sc.active||0;
+    document.getElementById('sError').textContent = sc.error||0;
+  }
+
+  const bn = document.getElementById('banner');
+  if(sc.waitText){ bn.style.display='block'; bn.innerHTML = esc(sc.waitText); }
+  else if(st==='need_login'){ bn.style.display='block'; bn.innerHTML = '尚未登录，请点击上方「登录抖音」'; }
+  else bn.style.display='none';
+
+  syncUnfollowBar();
+
+  const log = document.getElementById('log');
+  if((S.log||[]).length){
+    log.innerHTML = S.log.slice().reverse().map(l=>`<div class="${l.level||''}"><span class="t">${esc(l.t)}</span>${esc(l.msg)}</div>`).join('');
+  }
+}
+
+// 运行日志栏的显示开关，记在本地
+let SHOW_LOG = false;
+try { SHOW_LOG = localStorage.getItem('showLog') === '1'; } catch (e) { /* ignore */ }
+
+function toggleLog(){
+  SHOW_LOG = !SHOW_LOG;
+  try { localStorage.setItem('showLog', SHOW_LOG ? '1' : '0'); } catch (e) { /* ignore */ }
+  syncLogPanel();
+  checkNotices();
+}
+function syncLogPanel(){
+  const m = document.querySelector('main');
+  if (m) m.classList.toggle('withlog', SHOW_LOG);
+  const b = document.getElementById('logToggle');
+  if (b) b.style.background = SHOW_LOG ? 'var(--soft)' : '';
+  if (SHOW_LOG) { const l = document.getElementById('log'); if (l) l.scrollTop = 0; }
+}
+
+// 手动刷新：重新读取列表与标记
+async function refreshResults(){
+  await tick();
+  await loadResults();
+}
+
+async function tick(){
+  S = await api('/api/state');
+  render();
+  syncLogPanel();
+  // 取关进行中时同步刷新列表，让「关」标记实时出现
+  if ((S.unfollow || {}).status === 'running') loadResults();
+}
+
+function setType(t){
+  TYPE = t;
+  document.querySelectorAll('.tabs button').forEach(b=>b.className = b.dataset.t===t?'on':'');
+  syncOpenAllBtn();
+  syncUnfollowBar();
+  loadResults();
+}
+async function loadResults(){
+  const q = (document.getElementById('q').value||'').trim();
+  const r = await api('/api/results?type='+TYPE+'&q='+encodeURIComponent(q));
+  ROWS = r.rows || [];
+  renderResults();
+}
+function shortId(r){
+  if (r.uid) return r.uid;
+  const s = r.secUid || '';
+  return s.length > 14 ? s.slice(0, 14) + '…' : s;
+}
+// 「已开过」只在本次会话记录，不落库（重启后清空）；
+// 「已取关」持久化在数据库里，由后端返回。
+let OPENED = new Set();
+
+// 勾选状态。VIEW 是当前表格实际显示的行（含搜索过滤），
+// 「已选数量」与「打开主页 / 取关」都以二者的交集为准，所见即所操作。
+let SELECTED = new Set();
+let VIEW = [];
+
+// 「隐藏已取关」开关，记在本地，下次打开保持
+let HIDE_UNFOLLOWED = false;
+try { HIDE_UNFOLLOWED = localStorage.getItem('hideUnfollowed') === '1'; } catch (e) { /* ignore */ }
+
+function toggleHideUnfollowed(checked){
+  HIDE_UNFOLLOWED = !!checked;
+  try { localStorage.setItem('hideUnfollowed', HIDE_UNFOLLOWED ? '1' : '0'); } catch (e) { /* ignore */ }
+  renderResults();
+}
+
+function selectedRows(){
+  // 以当前分类的全部行为准（ROWS），不依赖 VIEW。
+  // VIEW 会被搜索 / 隐藏已取关等重建，之前用 VIEW 会出现
+  // 「明明勾了却说没选中」的问题。
+  return ROWS.filter(r => r.secUid && SELECTED.has(r.secUid));
+}
+function onRowSelect(cb){
+  const uid = cb.dataset.uid;
+  if (!uid) { cb.checked = false; return; }
+  if (cb.checked) SELECTED.add(uid); else SELECTED.delete(uid);
+  updateSelCount();
+}
+function toggleSelectAll(checked){
+  VIEW.forEach(r => {
+    if (!r.secUid) return;
+    if (checked) SELECTED.add(r.secUid); else SELECTED.delete(r.secUid);
+  });
+  renderResults();
+}
+function clearSel(){
+  SELECTED.clear();
+  renderResults();
+}
+
+// ---- 按距今天数批量勾选 ----
+function syncDaySliders(){
+  const wrap = document.getElementById('dayPick');
+  const mn = document.getElementById('dayMin'), mx = document.getElementById('dayMax');
+  if (!wrap || !mn || !mx) return;
+  // 「距今天数」只在超期未更新 / 全部账号里有意义
+  const show = !!window.__DESKTOP__ && (TYPE === 'stale' || TYPE === 'all');
+  wrap.style.display = show ? 'flex' : 'none';
+  if (!show) return;
+
+  const ds = VIEW.map(r => r.days).filter(d => typeof d === 'number');
+  // 滑杆两端自动跟随当前数据的最小/最大天数
+  const lo = ds.length ? Math.min(...ds) : 0;
+  const hi = ds.length ? Math.max(...ds) : 365;
+  const prevLo = +mn.min, prevHi = +mx.max;
+  mn.min = mx.min = lo;
+  mn.max = mx.max = hi;
+
+  // 首次进入、或数据范围变了，就把两个手柄拉到两端
+  const rangeChanged = prevLo !== lo || prevHi !== hi;
+  if (!mn.dataset.init || rangeChanged || +mn.value < lo || +mn.value > hi) mn.value = lo;
+  if (!mx.dataset.init || rangeChanged || +mx.value < lo || +mx.value > hi) mx.value = hi;
+  mn.dataset.init = '1';
+  mx.dataset.init = '1';
+  syncDayLabel();
+}
+
+function dayRange(){
+  const a = +document.getElementById('dayMin').value;
+  const b = +document.getElementById('dayMax').value;
+  return { lo: Math.min(a, b), hi: Math.max(a, b) };
+}
+
+function syncDayLabel(){
+  const mn = document.getElementById('dayMin'), mx = document.getElementById('dayMax');
+  if (!mn || !mx) return;
+
+  // 两个手柄不能交叉：拖动哪个就顶住另一个
+  let a = +mn.value, b = +mx.value;
+  if (a > b) {
+    if (document.activeElement === mn) { mx.value = a; b = a; }
+    else { mn.value = b; a = b; }
+  }
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+
+  // 更新轨道上的高亮段
+  const fill = document.getElementById('dayFill');
+  if (fill) {
+    const span = (+mx.max - +mn.min) || 1;
+    fill.style.left = ((lo - +mn.min) / span * 100) + '%';
+    fill.style.right = (100 - (hi - +mn.min) / span * 100) + '%';
+  }
+
+  document.getElementById('dayMinVal').textContent = lo;
+  document.getElementById('dayMaxVal').textContent = hi;
+  const n = VIEW.filter(r => r.secUid && typeof r.days === 'number' && r.days >= lo && r.days <= hi).length;
+  document.getElementById('dayMatch').textContent = n ? `匹配 ${n} 个` : '无匹配';
+}
+
+// 一键勾选当前列表里「已开过」的账号
+function selectOpened(){
+  SELECTED.clear();
+  let n = 0;
+  VIEW.forEach(r => {
+    if (r.secUid && OPENED.has(r.secUid)) { SELECTED.add(r.secUid); n++; }
+  });
+  renderResults();
+  if (!n) alert('当前列表没有「已开过」的账号');
+}
+
+function selectByDays(){
+  const { lo, hi } = dayRange();
+  SELECTED.clear();
+  let n = 0;
+  VIEW.forEach(r => {
+    if (!r.secUid || typeof r.days !== 'number') return;
+    if (r.days >= lo && r.days <= hi) { SELECTED.add(r.secUid); n++; }
+  });
+  renderResults();
+  if (!n) alert(`没有距今天数在 ${lo} ~ ${hi} 天之间的账号`);
+}
+function updateSelCount(){
+  const n = selectedRows().length;
+  const el = document.getElementById('selCount');
+  if (el) {
+    el.textContent = n ? `已选 ${n} 个` : '';
+    el.style.display = n ? '' : 'none';
+  }
+  const clr = document.getElementById('selClear');
+  if (clr) clr.style.display = n ? '' : 'none';
+  // 本次会话有「已开过」的账号时，才显示这个快捷勾选按钮
+  const so = document.getElementById('selOpened');
+  if (so) {
+    const openedInView = VIEW.filter(r => r.secUid && OPENED.has(r.secUid)).length;
+    so.style.display = openedInView ? '' : 'none';
+    so.textContent = openedInView ? `选中已开过的（${openedInView}）` : '选中已开过的';
+  }
+  // 表头全选框：当前页全部选中才打勾
+  const sa = document.getElementById('selAll');
+  if (sa) sa.checked = VIEW.length > 0 && selectedRows().length === VIEW.length;
+}
+
+function renderResults(){
+  syncOpenAllBtn();
+  const q = (document.getElementById('q').value||'').trim().toLowerCase();
+  let rows = q ? ROWS.filter(r=>(r.nickname||'').toLowerCase().includes(q)||String(r.uid||'').includes(q)) : ROWS;
+  const unfCount = ROWS.filter(r => r.unfollowedAt).length;
+  if (HIDE_UNFOLLOWED) rows = rows.filter(r => !r.unfollowedAt);
+  VIEW = rows;
+
+  // 同步开关与计数（显示被隐藏了几个）
+  const hu = document.getElementById('hideUnf');
+  if (hu) hu.checked = HIDE_UNFOLLOWED;
+  const hl = document.getElementById('hideUnfLabel');
+  if (hl) hl.textContent = unfCount ? `隐藏已取关（${unfCount}）` : '隐藏已取关';
+  const thead = document.getElementById('thead'), tbody = document.getElementById('tbody');
+
+  const selHead = '<th style="width:132px"><label style="display:flex;align-items:center;gap:5px;font-weight:500;cursor:pointer">'
+    + '<input type="checkbox" id="selAll" onchange="toggleSelectAll(this.checked)" style="width:auto;padding:0">全选</label></th>';
+  // 勾选框旁的标记
+  const mark = r => {
+    let s = '';
+    if (OPENED.has(r.secUid)) s += '<span title="打开过主页" style="display:inline-block;font-size:10px;line-height:15px;padding:0 4px;border-radius:3px;background:#e8f0fe;color:#1a56db;margin-left:3px;white-space:nowrap">已开过</span>';
+    if (r.unfollowedAt) s += '<span title="已取关" style="display:inline-block;font-size:10px;line-height:15px;padding:0 4px;border-radius:3px;background:#fde8e8;color:#c81e1e;margin-left:3px;white-space:nowrap">已取关</span>';
+    return s;
+  };
+  const selCell = r => '<td style="white-space:nowrap"><input type="checkbox" class="sel" data-uid="' + esc(r.secUid||'') + '" '
+    + (SELECTED.has(r.secUid) ? 'checked' : '') + ' onchange="onRowSelect(this)" style="width:auto;padding:0">'
+    + mark(r) + '</td>';
+  const openCell = r => '<td><a href="#" data-url="' + esc(r.homeUrl) + '" data-sec="' + esc(r.secUid||'')
+    + '" onclick="openLink(this.dataset.url,this.dataset.sec);return false;">打开</a></td>';
+
+  if(TYPE==='error'){
+    thead.innerHTML = '<tr>'+selHead+'<th style="width:22%">账号名</th><th style="width:18%">账号ID</th><th>异常原因</th><th style="width:64px">主页</th></tr>';
+    tbody.innerHTML = rows.length ? rows.map(r=>`<tr>
+      ${selCell(r)}
+      <td class="name" title="${esc(r.nickname)}">${esc(r.nickname)}</td>
+      <td class="id" title="${esc(r.uid||r.secUid)}">${esc(shortId(r))}</td>
+      <td>${esc(r.note)}</td>
+      ${openCell(r)}</tr>`).join('')
+      : '<tr><td colspan="5" class="empty">暂无数据</td></tr>';
+  } else {
+    thead.innerHTML = '<tr>'+selHead+'<th style="width:22%">账号名</th><th style="width:18%">账号ID</th><th style="width:15%">最后更新</th><th style="width:13%;text-align:right">距今天数</th><th style="width:64px">主页</th></tr>';
+    tbody.innerHTML = rows.length ? rows.map(r=>`<tr>
+      ${selCell(r)}
+      <td class="name" title="${esc(r.nickname)}">${esc(r.nickname)}</td>
+      <td class="id" title="${esc(r.uid||r.secUid)}">${esc(shortId(r))}</td>
+      <td class="num">${esc(r.lastPostDate||'—')}</td>
+      <td class="num ${TYPE!=='all'?'days':''}">${r.days ?? '—'}</td>
+      ${openCell(r)}</tr>`).join('')
+      : '<tr><td colspan="6" class="empty">暂无数据</td></tr>';
+  }
+  updateSelCount();
+  syncDaySliders();
+}
+
+async function startScan(){
+  const r = await api('/api/scan/start','POST');
+  if (r && r.ok === false) alert('无法开始扫描：\n\n' + (r.error || r.message || '未知原因'));
+  tick();
+}
+async function pauseScan(){ await api('/api/scan/pause','POST'); tick(); }
+async function resumeScan(){ await api('/api/scan/resume','POST'); tick(); }
+async function stopScan(){ if(!confirm('确定停止扫描？已完成的进度会保留。')) return; await api('/api/scan/stop','POST'); tick(); }
+async function doLogin(){ await api('/api/login','POST'); tick(); }
+
+// 桌面应用没有浏览器的「下载」和「新标签页」机制，这三个功能改走本地接口，
+// 由后端写入文件 / 调用系统默认程序打开。浏览器版仍走原来的方式。
+async function exportCsv(){
+  if (window.__DESKTOP__) {
+    const r = await api('/api/export?type=' + TYPE);
+    alert(r.message || '已导出');
+    return;
+  }
+  location.href = '/api/export?type=' + TYPE;
+}
+async function openReport(){
+  if (window.__DESKTOP__) {
+    const r = await api('/api/open-report');
+    alert(r.message || '');
+    return;
+  }
+  window.open('/report', '_blank', 'noreferrer');
+}
+function openLink(url, secUid){
+  if (!url) return;
+  if (window.__DESKTOP__) {
+    if (secUid) { OPENED.add(secUid); renderResults(); }  // 即时显示「已开过」
+    api('/api/open?url=' + encodeURIComponent(url));
+    return;
+  }
+  window.open(url, '_blank', 'noreferrer');
+}
+
+// ---- 一键打开全部主页 ----
+// 逐个用系统默认浏览器打开当前分类下的所有主页，每打开 1 个随机停顿 0.5~2.5 秒。
+// 仅在桌面版提供：浏览器版会被弹窗拦截器挡掉。
+const OPEN_ALL = { running: false, stop: false, resume: null };
+
+function syncOpenAllBtn(){
+  const btn = document.getElementById('openAllBtn');
+  if (!btn) return;
+  const show = !!window.__DESKTOP__ && TYPE !== 'all';
+  btn.style.display = show ? '' : 'none';
+  const stopBtn = document.getElementById('openAllStopBtn');
+  if (stopBtn) stopBtn.style.display = (show && OPEN_ALL.running) ? '' : 'none';
+  if (!OPEN_ALL.running) {
+    // 有勾选且其中有已打开过的 → 提示这是「接着打开」
+    let label = '打开选中主页';
+    try {
+      const sel = selectedRows().filter(r => r.homeUrl);
+      const rest = sel.filter(r => !(r.secUid && OPENED.has(r.secUid))).length;
+      if (sel.length && rest && rest < sel.length) label = `继续打开剩余 ${rest} 个`;
+    } catch (e) { /* 列表还没加载好就算了 */ }
+    btn.textContent = label;
+  }
+}
+
+const sleepMs = ms => new Promise(r => setTimeout(r, ms));
+
+// 停止批量打开：解除暂停（若正暂停）并置停止标志
+function stopOpenAll(){
+  OPEN_ALL.stop = true;
+  if (OPEN_ALL.resume) { const r = OPEN_ALL.resume; OPEN_ALL.resume = null; r(); }
+  const btn = document.getElementById('openAllBtn');
+  if (btn && OPEN_ALL.running) btn.textContent = '正在停止…';
+}
+
+async function openAllHomepages(){
+  const btn = document.getElementById('openAllBtn');
+  if (OPEN_ALL.running) {
+    // 暂停中点击 = 继续；正在打开时点击 = 停止
+    if (OPEN_ALL.resume) { const r = OPEN_ALL.resume; OPEN_ALL.resume = null; r(); return; }
+    OPEN_ALL.stop = true;
+    btn.textContent = '正在停止…';
+    return;
+  }
+
+  const label = { stale: '超期未更新', error: '异常账号', pending: '未检查' }[TYPE];
+  if (!label) { alert('请先切换到「超期未更新」「异常账号」或「未检查」分类'); return; }
+
+  // 只对勾选的账号生效；已经打开过的跳过，
+  // 这样中途按「停止」后再点一次就是「接着打开」而不是从头再来
+  const all = selectedRows().filter(r => r.homeUrl);
+  if (!all.length) { alert(`请先在「${label}」列表里勾选要打开的账号`); return; }
+  const targets = all.filter(r => !(r.secUid && OPENED.has(r.secUid)));
+  const skipped = all.length - targets.length;
+  if (!targets.length) {
+    alert(`勾选的 ${all.length} 个账号都已经打开过了`);
+    return;
+  }
+  const total = targets.length;
+
+  // 保护：一次打开太多标签页会把电脑拖垮，先用搜索或导出 CSV 缩小范围
+  if (total > 500) {
+    alert(
+      `已勾选 ${total} 个，数量过多，不适合批量打开。\n\n` +
+      `建议：\n` +
+      `· 用搜索框缩小范围后再勾选\n` +
+      `· 或用「导出 CSV」拿到全部主页链接`
+    );
+    return;
+  }
+
+  const warn = total > 50 ? `\n\n⚠️ 数量较多（${total} 个），会打开较多浏览器标签页。` : '';
+
+  if (!confirm(
+    `将用默认浏览器打开 ${total} 个主页。` + (skipped ? `（已跳过 ${skipped} 个打开过的）` : '') + `\n\n` +
+    `节奏：每个间隔 1~3 秒；每打开 20 个会暂停，等你点「继续」再往下走。${warn}\n\n` +
+    `过程中可以随时点按钮停止。确定继续？`
+  )) return;
+
+  OPEN_ALL.running = true;
+  OPEN_ALL.stop = false;
+  let opened = 0;
+
+  for (const t of targets) {
+    if (OPEN_ALL.stop) break;
+    await fetch('/api/open?url=' + encodeURIComponent(t.homeUrl),
+      { headers: window.__TOKEN__ ? { 'X-Token': window.__TOKEN__ } : {} });
+    if (t.secUid) OPENED.add(t.secUid);   // 本地即时打「已开过」标记
+    opened++;
+    btn.textContent = `打开中 ${opened}/${total}（点击停止）`;
+    if (opened % 10 === 0) renderResults();
+
+    // 每个账号间隔 1~3 秒（至少 1 秒），等待过程可被停止打断
+    const wait = 1000 + Math.random() * 2000;
+    const t0 = Date.now();
+    while (Date.now() - t0 < wait) {
+      if (OPEN_ALL.stop) break;
+      await sleepMs(50);
+    }
+    if (OPEN_ALL.stop) break;
+
+    // 每打开 20 个暂停，等用户点「继续」再往下走
+    if (opened % 20 === 0 && opened < total) {
+      btn.textContent = `已打开 ${opened}/${total}｜点击继续`;
+      await new Promise(res => { OPEN_ALL.resume = res; });
+      OPEN_ALL.resume = null;
+      if (OPEN_ALL.stop) break;
+    }
+    btn.textContent = `打开中 ${opened}/${total}（点击停止）`;
+  }
+
+  OPEN_ALL.running = false;
+  btn.textContent = '打开选中主页';
+  const sb = document.getElementById('openAllStopBtn');
+  if (sb) sb.style.display = 'none';
+  renderResults();
+  alert(OPEN_ALL.stop ? `已停止，共打开 ${opened} 个主页。` : `完成，共打开 ${opened} 个主页。`);
+  OPEN_ALL.stop = false;
+}
+
+// 取关待办队列：停止后可以「接着做」，不用重新勾选、也不会重复取关已完成的
+let UF_QUEUE = [];
+let UF_RUN_TOTAL = 0;
+
+// 当前这轮还剩多少个没做（0 表示没有可继续的）
+function ufRemaining(){
+  const u = (S && S.unfollow) || {};
+  if (u.status === 'running' || u.status === 'capturing') return 0;
+  if (!UF_QUEUE.length) return 0;
+  const consumed = Math.min(u.done || 0, UF_RUN_TOTAL);
+  return Math.max(0, UF_RUN_TOTAL - consumed);
+}
+
+// ---- 取关进度弹窗 ----
+function openUfModal(){
+  const m = document.getElementById('ufModal');
+  if (m) m.style.display = 'flex';
+  syncUfModal();
+}
+function closeUfModal(){
+  const m = document.getElementById('ufModal');
+  if (m) m.style.display = 'none';
+}
+function syncUfModal(){
+  const m = document.getElementById('ufModal');
+  if (!m || m.style.display === 'none') return;
+  const u = (S && S.unfollow) || {};
+  const st = u.status || 'idle';
+  const done = u.done || 0, total = u.total || 0;
+  const running = st === 'running' || st === 'capturing';
+
+  const map = {
+    idle: '准备中…', capturing: '正在录制取关请求…',
+    running: '正在取关…', done: '已完成', error: '出错了',
+  };
+  document.getElementById('ufmStatus').textContent = map[st] || st;
+  document.getElementById('ufmBar').style.width = (total ? Math.min(100, done / total * 100) : 0) + '%';
+
+  const rows = [];
+  if (total) rows.push(`进度：${done} / ${total}`);
+  if (st === 'running' || st === 'done') rows.push(`成功 ${u.success || 0} 个｜失败 ${u.failed || 0} 个`);
+  if (u.waitText) rows.push(u.waitText);
+  if (u.current && st === 'running') rows.push('当前：' + u.current);
+  if (st === 'done') {
+    const rest = ufRemaining();
+    rows.push(rest ? `还有 ${rest} 个没做——关掉窗口后点「继续取关剩余 ${rest} 个」即可接着做` : '可以关闭这个窗口了');
+  }
+  document.getElementById('ufmDetail').innerHTML = rows.map(esc).join('<br>');
+
+  document.getElementById('ufmStop').style.display = running ? '' : 'none';
+  document.getElementById('ufmStop').disabled = st !== 'running';
+}
+
+// ---- 后端主动推来的错误 / 提醒，用弹窗告知（不再只躺在日志里）----
+let LAST_NOTICE = 0;
+function checkNotices(){
+  const ns = (S && S.notices) || [];
+  if (!ns.length) return;
+  let maxId = LAST_NOTICE;
+  ns.forEach(n => { if ((n.id || 0) > maxId) maxId = n.id; });
+  const fresh = ns.filter(n => (n.id || 0) > LAST_NOTICE);
+  if (!fresh.length) return;
+  LAST_NOTICE = maxId;
+  api('/api/notices/ack', 'POST', { id: maxId });
+  const body = fresh.map(n => (n.level === 'err' ? '❌ ' : '⚠️ ') + n.msg).join('\n\n');
+  alert(fresh.length > 1 ? `有 ${fresh.length} 条提醒：\n\n` + body : body);
+}
+
+// ---- 一键取关（不可逆，多重确认）----
+function syncUnfollowBar(){
+  const bar = document.getElementById('unfollowBar');
+  if (!bar) return;
+  bar.style.display = (window.__DESKTOP__ && TYPE === 'stale') ? '' : 'none';
+
+  const u = (S && S.unfollow) || {};
+  const st = document.getElementById('ufStatus');
+  const hint = document.getElementById('ufHint');
+  const running = u.status === 'running' || u.status === 'capturing';
+
+  if (u.status === 'capturing') {
+    st.textContent = '录制中…';
+    hint.textContent = u.waitText || '请在弹出的浏览器里点一次「已关注」→「取消关注」';
+  } else if (u.status === 'running') {
+    st.textContent = `进行中 ${u.done || 0}/${u.total || 0}`;
+    hint.textContent = `成功 ${u.success || 0}｜失败 ${u.failed || 0}｜${u.waitText || '每个间隔 3~8 秒，每 10 个再停 10~20 秒'}`;
+  } else if (u.status === 'done') {
+    st.textContent = '已完成';
+    hint.textContent = `成功 ${u.success || 0}｜失败 ${u.failed || 0}`;
+  } else if (u.ready) {
+    st.textContent = '已就绪';
+    const t = u.template || {};
+    const detail = t.method ? `（${t.method}${t.type != null ? '，type=' + t.type : ''}${t.byUserId ? '，按 user_id' : ''}${t.bySecUid ? '，按 sec_user_id' : ''}）` : '';
+    hint.textContent = `已录制取关请求${detail}。先勾选要取关的账号，再点「取关…」。取关不可逆，建议先用 1 个验证。`;
+  } else {
+    st.textContent = '未录制';
+    hint.textContent = '尚未录制取关请求。请到「设置」页点「录制取关请求」，打开一个账号主页手动取消关注一次，程序记下这次请求后用于批量执行。';
+  }
+
+  const runBtn = document.getElementById('ufRun');
+  const rest = ufRemaining();
+  runBtn.textContent = rest ? `继续取关剩余 ${rest} 个` : '取关…';
+  runBtn.style.display = running ? 'none' : '';
+  document.getElementById('ufStop').style.display = running ? '' : 'none';
+  runBtn.disabled = !u.ready;
+  syncUfModal();
+}
+
+async function captureUnfollow(){
+  // 优先用勾选的第一个账号录制；没勾选就用当前列表第一个。
+  // 从「设置」页触发时列表可能还没加载，这里兜底提示。
+  const first = selectedRows()[0] || (ROWS || []).find(r => r.secUid);
+  if (!first) {
+    alert('需要先有账号列表才能录制。\n\n请回到「主页」，等列表加载出来后再来录制。');
+    return;
+  }
+  if (!confirm(
+    `将打开账号「${first.nickname || first.secUid}」的主页。\n\n` +
+    `请在弹出的浏览器里手动点击「已关注」→「取消关注」一次，\n` +
+    `程序会记录这次请求，之后用于批量取关。\n\n` +
+    `录制只记录请求格式，不会操作其它账号。`
+  )) return;
+  const r = await api('/api/unfollow/capture', 'POST', { secUid: first.secUid });
+  if (r && r.ok === false) {
+    alert('录制未能开始：\n\n' + (r.message || '未知原因'));
+    return;
+  }
+  tick();
+  setTimeout(tick, 600);
+}
+
+async function startUnfollow(){
+  const u = (S && S.unfollow) || {};
+  if (!u.ready) { alert('尚未录制取关请求。请到「设置」页点「录制取关请求」。'); return; }
+
+  // 上次被停止 / 中断后还有剩余 → 接着做，不重新勾选、不重复取关已完成的
+  const rest = ufRemaining();
+  let targets;
+  if (rest > 0) {
+    const consumed = Math.min(u.done || 0, UF_RUN_TOTAL);
+    UF_QUEUE = UF_QUEUE.slice(consumed);   // 丢掉已完成的
+    targets = UF_QUEUE;
+    UF_RUN_TOTAL = targets.length;
+    if (!confirm(
+      `继续取关剩余 ${targets.length} 个账号？\n\n` +
+      `（上一轮已完成 ${consumed} 个）\n` +
+      `· 每个间隔 3~8 秒，每满 10 个再停 10~20 秒\n` +
+      `· 命中风控会立即自动停止\n\n` +
+      `确定继续？`
+    )) return;
+  } else {
+    // 全新一批：取关请求实测用 body 里的 user_id 定位目标，uid 与 secUid 都要带上
+    targets = selectedRows()
+      .filter(r => r.uid || r.secUid)
+      .map(r => ({ uid: r.uid || '', secUid: r.secUid || '' }));
+    if (!targets.length) { alert('请先勾选要取关的账号'); return; }
+    if (!confirm(
+      `确定取关已勾选的 ${targets.length} 个账号吗？\n\n` +
+      `· 此操作不可撤销\n` +
+      `· 按勾选顺序执行，每个间隔 3~8 秒，每满 10 个再停 10~20 秒\n` +
+      `· 命中风控会立即自动停止\n\n` +
+      `确定继续？`
+    )) return;
+    UF_QUEUE = targets;
+    UF_RUN_TOTAL = targets.length;
+  }
+  openUfModal();
+  const r = await api('/api/unfollow/start', 'POST', { targets });
+  if (r && r.ok === false) {
+    closeUfModal();
+    alert('取关未能开始：\n\n' + (r.message || '未知原因'));
+    tick();
+    return;
+  }
+  tick();
+  setTimeout(tick, 600);
+}
+
+async function stopUnfollow(){
+  if (!confirm('确定停止取关？已执行的部分不会回滚。')) return;
+  await api('/api/unfollow/stop', 'POST');
+  tick();
+  setTimeout(tick, 400);
+}
+
+function fillSettings(){
+  const s = S.settings || {};
+  document.getElementById('setDays').value = s.staleDays ?? 60;
+  document.getElementById('setDir').textContent = (S.settings && S.settings.outDir) || '—';
+
+  // 取关请求录制状态
+  const ti = document.getElementById('ufTplInfo');
+  if (ti) {
+    const u = (S && S.unfollow) || {};
+    const t = u.template;
+    if (t && t.method) {
+      const when = t.capturedAt ? new Date(t.capturedAt * 1000).toLocaleString('zh-CN') : '';
+      ti.innerHTML = `<span style="color:var(--green)">已录制</span>（${esc(t.method)}${t.type != null ? '，type=' + esc(String(t.type)) : ''}${t.byUserId ? '，按 user_id' : ''}${t.bySecUid ? '，按 sec_user_id' : ''}）${when ? '｜' + esc(when) : ''}`;
+    } else {
+      ti.innerHTML = '<span style="color:var(--amber)">尚未录制</span>——一键取关前必须先录制一次';
+    }
+  }
+  const sel = document.getElementById('setSpeed');
+  if(!sel.options.length){
+    sel.innerHTML = (s.speedOptions||[]).map(o=>`<option value="${o.key}">${esc(o.label)}</option>`).join('');
+  }
+  sel.value = s.speed || 'conservative';
+}
+async function saveSettings(){
+  const body = { staleDays: document.getElementById('setDays').value, speed: document.getElementById('setSpeed').value };
+  await api('/api/settings', 'POST', body);
+  await tick();
+  alert('设置已保存');
+}
+async function clearData(){
+  const alsoLogin = document.getElementById('clearLogin').checked;
+  const lines = [
+    '确定从零开始？',
+    '',
+    '将清空：所有账号数据、扫描报告、导出文件、列表缓存、设置',
+    alsoLogin ? '并清除登录状态（下次需重新扫码）' : '（登录状态会保留，无需重新扫码）',
+    '',
+    '此操作不可撤销。',
+  ];
+  if(!confirm(lines.join('\n'))) return;
+  if(!confirm('再次确认：真的要清空所有数据吗？')) return;
+  const r = await api('/api/data/clear', 'POST', { alsoLogin });
+  ROWS = []; renderResults(); await tick();
+  alert((r && r.message) || '已清空所有数据，回到初始状态。');
+}
+
+tick();
+loadResults();
+setInterval(tick, 1500);
+</script>
+</body>
+</html>
