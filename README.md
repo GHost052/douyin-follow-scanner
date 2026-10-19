@@ -81,9 +81,18 @@ Rust + 系统 WebView2 原生桌面应用 · 约 1 MB · 免安装 · 数据不�
 
 ### 方式一：直接下载（最省事）
 
-到 [Releases](../../releases) 下载 `douyin-follow-cleaner.exe` 与 `WebView2Loader.dll`，**两个文件放在同一个目录**，双击 exe 即可。
+到 [Releases](../../releases) 下载 `douyin-follow-cleaner-v1.0.0-win64.zip`，解压后得到三个文件：
 
-> `WebView2Loader.dll` 必须与 exe 放在一起，否则会提示缺少 DLL。
+```
+douyin-follow-cleaner.exe
+WebView2Loader.dll
+config.example.json
+```
+
+双击 `douyin-follow-cleaner.exe` 即可，无需安装。
+
+> **`WebView2Loader.dll` 必须与 exe 放在同一目录**，否则会提示缺少 DLL。
+> 想改默认配置的话，把 `config.example.json` 复制一份改名为 `config.json`，放同目录。
 
 ### 方式二：自己编译
 

@@ -35,3 +35,9 @@ unfollow_template.json
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ---------- 归档的旧文件（不参与版本控制） ----------
+_旧文件/
+
+# ---------- 本地生成的发布包 ----------
+release/
