@@ -5,7 +5,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -594,12 +594,17 @@ fn route(state: &Arc<AppState>, req: &Request) -> Reply {
 
             let st = Arc::clone(state);
             st.unfollow_stop.store(false, Ordering::SeqCst);
+            let n = targets.len() as i64;
             st.update_unfollow(|p| {
                 *p = crate::state::UnfollowProgress::default();
                 p.status = "running".into();
-                p.total = targets.len() as i64;
+                p.total = n;
+                p.eta_seconds = Some(estimate_unfollow_eta(n, 0, 0.0));
             });
-            st.log(&format!("开始取关：本次 {} 个账号", targets.len()), "warn");
+            st.log(
+                &format!("开始取关：本次 {} 个账号｜预计耗时 {}", n, fmt_eta(estimate_unfollow_eta(n, 0, 0.0))),
+                "warn",
+            );
             thread::spawn(move || run_unfollow(st, targets));
             Reply::Empty
         }
@@ -646,6 +651,49 @@ fn wait_ms(state: &Arc<AppState>, ms: u64) {
     }
 }
 
+/// 取关的间隔参数。基础间隔 3~8 秒；每满 10 个再额外停 10~20 秒。
+const UF_BASE_MIN_MS: u64 = 3_000;
+const UF_BASE_SPAN_MS: u64 = 5_001; // 3~8 秒
+const UF_EXTRA_MIN_MS: u64 = 10_000;
+const UF_EXTRA_SPAN_MS: u64 = 10_001; // 10~20 秒
+const UF_EXTRA_EVERY: i64 = 10;
+
+/// 取关预计剩余时间（秒）
+///
+/// 按「延时平均值 × 剩余个数 + 每 10 个一次的额外延时」估算。
+/// 已完成 3 个以上时用实测平均单耗兜底并取较大值——网络请求本身也要时间，
+/// 只按间隔算会明显偏小，用户会觉得进度条在骗人。
+fn estimate_unfollow_eta(rest: i64, done: i64, elapsed_ms: f64) -> i64 {
+    if rest <= 0 {
+        return 0;
+    }
+    let avg_base = (UF_BASE_MIN_MS as f64 + (UF_BASE_MIN_MS + UF_BASE_SPAN_MS - 1) as f64) / 2.0;
+    let avg_extra = (UF_EXTRA_MIN_MS as f64 + (UF_EXTRA_MIN_MS + UF_EXTRA_SPAN_MS - 1) as f64) / 2.0;
+
+    let theory = rest as f64 * avg_base + (rest / UF_EXTRA_EVERY) as f64 * avg_extra;
+    let per = if done >= 3 && elapsed_ms > 0.0 {
+        elapsed_ms / done as f64
+    } else {
+        avg_base + avg_extra / UF_EXTRA_EVERY as f64
+    };
+    let measured = rest as f64 * per;
+    (theory.max(measured) / 1000.0).round() as i64
+}
+
+/// 秒数 → 「X时Y分 / X分Y秒」
+fn fmt_eta(secs: i64) -> String {
+    let s = secs.max(0);
+    let h = s / 3600;
+    let m = (s % 3600) / 60;
+    if h > 0 {
+        format!("{h}时{m}分")
+    } else if m > 0 {
+        format!("{m}分")
+    } else {
+        format!("{s}秒")
+    }
+}
+
 /// 执行取关：逐个调用录制的请求，命中风控立即熔断
 fn run_unfollow(state: Arc<AppState>, targets: Vec<(String, String)>) {
     let cfg = state.cfg();
@@ -668,6 +716,7 @@ fn run_unfollow(state: Arc<AppState>, targets: Vec<(String, String)>) {
 
     let mut ok = 0i64;
     let mut bad = 0i64;
+    let t0 = Instant::now();
 
     for (i, (uid, sec)) in targets.iter().enumerate() {
         if state.unfollow_stop.load(Ordering::SeqCst) {
@@ -704,22 +753,31 @@ fn run_unfollow(state: Arc<AppState>, targets: Vec<(String, String)>) {
             }
         }
 
+        // 进度与预计剩余：剩余个数 × 平均延时 + 剩余里每 10 个的额外延时
+        let done_n = (i + 1) as i64;
+        let rest = targets.len() as i64 - done_n;
+        let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
         state.update_unfollow(|p| {
-            p.done = (i + 1) as i64;
+            p.done = done_n;
             p.success = ok;
             p.failed = bad;
+            p.eta_seconds = Some(estimate_unfollow_eta(rest, done_n, elapsed_ms));
         });
 
-        // 基础间隔 3~8 秒；每满 10 个再额外停 10~20 秒
-        if i + 1 < targets.len() {
-            let base = 3000 + pseudo_rand(5001);
-            let extra = if (i + 1) % 10 == 0 { 10_000 + pseudo_rand(10_001) } else { 0 };
+        if rest > 0 {
+            let base = UF_BASE_MIN_MS + pseudo_rand(UF_BASE_SPAN_MS);
+            let extra = if done_n % UF_EXTRA_EVERY == 0 {
+                UF_EXTRA_MIN_MS + pseudo_rand(UF_EXTRA_SPAN_MS)
+            } else {
+                0
+            };
             let wait = base + extra;
+            let eta = estimate_unfollow_eta(rest, done_n, elapsed_ms);
             state.update_unfollow(|p| {
                 p.wait_text = if extra > 0 {
-                    format!("已完成 {} 个，长休息 {} 秒…", i + 1, wait / 1000)
+                    format!("已完成 {} 个，长休息 {} 秒…｜预计剩余 {}", done_n, wait / 1000, fmt_eta(eta))
                 } else {
-                    format!("间隔 {} 秒后继续…", wait / 1000)
+                    format!("间隔 {} 秒后继续…｜预计剩余 {}", wait / 1000, fmt_eta(eta))
                 };
             });
             wait_ms(&state, wait);
@@ -732,6 +790,7 @@ fn run_unfollow(state: Arc<AppState>, targets: Vec<(String, String)>) {
         p.status = "done".into();
         p.current.clear();
         p.wait_text.clear();
+        p.eta_seconds = Some(0);
     });
     state.log(&format!("取关结束：成功 {ok}，失败 {bad}"), if bad > 0 { "warn" } else { "ok" });
     if bad > 0 && ok == 0 {
@@ -788,5 +847,31 @@ fn send_html(stream: &mut TcpStream, html: &str) {
         html.as_bytes().len(),
         html
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::estimate_unfollow_eta;
+
+    #[test]
+    fn eta_follows_avg_delay_formula() {
+        // 平均基础间隔 5.5 秒（3~8 的均值）+ 每 10 个一次 15 秒（10~20 的均值）
+        // 10 个：10 * 5.5 + 1 * 15 = 70 秒
+        assert_eq!(estimate_unfollow_eta(10, 0, 0.0), 70);
+        // 100 个：100 * 5.5 + 10 * 15 = 700 秒
+        assert_eq!(estimate_unfollow_eta(100, 0, 0.0), 700);
+        // 尚未跑够 3 个时按保守值 5.5 + 1.5 = 7 秒/个估
+        assert_eq!(estimate_unfollow_eta(1, 0, 0.0), 7);
+        assert_eq!(estimate_unfollow_eta(9, 0, 0.0), 63);
+        // 已全部完成
+        assert_eq!(estimate_unfollow_eta(0, 100, 10_000.0), 0);
+    }
+
+    #[test]
+    fn eta_uses_measured_rate_when_slower() {
+        // 实测每个耗时 20 秒（远高于理论 5.5 秒）→ 取实测值
+        // 10 个 × 20 秒 = 200 秒，大于理论的 70 秒
+        assert_eq!(estimate_unfollow_eta(10, 10, 200_000.0), 200);
+    }
 }
 

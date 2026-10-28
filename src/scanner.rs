@@ -171,9 +171,8 @@ fn save_cache(state: &Arc<AppState>, accounts: &[crate::douyin::FollowAccount], 
 /// 一次关注列表读取的结果。
 struct ListFetch {
     accounts: Vec<crate::douyin::FollowAccount>,
-    /// 接口报告的关注总数（用于校验是否读完整）
-    total: i64,
-    /// 是否确认已完整读取：读到 has_more=false，或数量已达到 total
+    /// 是否读到底了：读到 has_more=false，或数量已达到接口报告的关注数。
+    /// 超过 1 万关注时接口只返回前 1 万，此时也按「读到底」处理，以实际列表为准。
     complete: bool,
     /// 是否属于「距上次超过 24 小时」的完整重读
     full_read: bool,
@@ -186,7 +185,7 @@ fn fetch_following_list(state: &Arc<AppState>, session: &Session) -> Result<List
 
     if cache.skip_fetch {
         state.log(&format!("使用缓存的关注列表：{} 个", accounts.len()), "");
-        return Ok(ListFetch { accounts, total: cache.total, complete: true, full_read: false });
+        return Ok(ListFetch { accounts, complete: true, full_read: false });
     }
 
     let mut offset = cache.offset;
@@ -269,18 +268,69 @@ fn fetch_following_list(state: &Arc<AppState>, session: &Session) -> Result<List
     save_cache(state, &accounts, offset, total, done);
     state.log(&format!("关注列表获取完成：累计 {} 个", accounts.len()), "");
 
-    // 与关注数校验，确认确实读完整了（不完整就不做差异对比，避免误判）
-    let complete = done && total > 0 && accounts.len() as i64 >= total;
-    if done && total > 0 && !complete {
-        state.log(
-            &format!("列表数量与关注数不一致（{} / {}），本次不做差异对比", accounts.len(), total),
-            "warn",
-        );
-    } else if complete {
-        state.log(&format!("已与关注数校验一致（{} 个）", total), "ok");
+    // 「读到底了」= has_more=false，或已拿到接口报告的全部关注数。
+    //
+    // 这里**不再要求**「实际获取数 == 接口报告的关注数」。抖音关注数超过 1 万时，
+    // 关注列表接口只返回前 1 万，但 total 仍是真实关注数，两者永远对不上。
+    // 旧逻辑在这种情况下直接跳过差异对比，结果就是：早已取关的账号一直留在库里，
+    // 关注总数只增不减、越滚越大。现在改为以「本次实际取到的列表」为准。
+    let complete = done;
+    if done {
+        if total > 0 && accounts.len() as i64 != total {
+            state.log(
+                &format!(
+                    "接口报告关注数 {}，实际取到 {} 个（超过 1 万时接口只返回前 1 万），本次以实际取到的列表为准",
+                    total,
+                    accounts.len()
+                ),
+                "warn",
+            );
+        } else {
+            state.log(&format!("关注列表已读到底（{} 个）", accounts.len()), "ok");
+        }
     }
 
-    Ok(ListFetch { accounts, total, complete, full_read })
+    Ok(ListFetch { accounts, complete, full_read })
+}
+
+// --------------------------------------------------------------------------- //
+// 批量写「已取关」标记
+//
+// 逐个 UPDATE 在万级账号下要 prepare + step 上万次，实测慢到不可接受。
+// SQLite 单条语句的绑定变量有上限（默认 999），所以按 400 一批走 IN。
+// --------------------------------------------------------------------------- //
+fn mark_unfollowed_bulk(db: &crate::db::Db, secs: &[String], ts: i64) {
+    if secs.is_empty() {
+        return;
+    }
+    let _ = db.exec("BEGIN");
+    for chunk in secs.chunks(400) {
+        let ph = vec!["?"; chunk.len()].join(",");
+        let sql = format!("UPDATE accounts SET unfollowed_at=? WHERE sec_uid IN ({ph})");
+        let mut params: Vec<Value> = Vec::with_capacity(chunk.len() + 1);
+        params.push(json!(ts));
+        params.extend(chunk.iter().map(|s| json!(s)));
+        if db.execute(&sql, &params).is_err() {
+            break;
+        }
+    }
+    let _ = db.exec("COMMIT");
+}
+
+fn clear_unfollowed_bulk(db: &crate::db::Db, secs: &[String]) {
+    if secs.is_empty() {
+        return;
+    }
+    let _ = db.exec("BEGIN");
+    for chunk in secs.chunks(400) {
+        let ph = vec!["?"; chunk.len()].join(",");
+        let sql = format!("UPDATE accounts SET unfollowed_at=NULL WHERE sec_uid IN ({ph})");
+        let params: Vec<Value> = chunk.iter().map(|s| json!(s)).collect();
+        if db.execute(&sql, &params).is_err() {
+            break;
+        }
+    }
+    let _ = db.exec("COMMIT");
 }
 
 // --------------------------------------------------------------------------- //
@@ -333,7 +383,7 @@ pub fn run_scan(state: Arc<AppState>, session: Session) {
         }
     }
 
-    // 完整重读且已与关注数校验一致时，做差异对比：
+    // 完整重读且已读到底时，做差异对比，以**本次实际取到的列表**为准：
     //   新增的 → 已在上面入库，last_checked_at 为空，即「未检查」
     //   消失的 → 标记「已取关」
     if fetched.full_read && fetched.complete {
@@ -353,37 +403,48 @@ pub fn run_scan(state: Arc<AppState>, session: Session) {
             .filter_map(|r| r.get(0).and_then(Value::as_str).map(str::to_string))
             .collect();
 
+        let existing_set: std::collections::HashSet<&str> =
+            existing.iter().map(String::as_str).collect();
         let live: std::collections::HashSet<&str> = accounts.iter().map(|a| a.sec.as_str()).collect();
 
-        // 消失的：在库里但不在新列表里
-        let mut gone = 0i64;
-        for sec in &existing {
-            if !live.contains(sec.as_str()) && !marked.contains(sec) {
-                db.mark_unfollowed(sec, now);
-                gone += 1;
-            }
-        }
-        // 重新出现的：之前标过已取关，现在又在列表里 → 清掉标记
-        let mut back = 0i64;
-        for a in &accounts {
-            if marked.contains(&a.sec) {
-                db.clear_unfollowed(&a.sec);
-                back += 1;
-            }
-        }
+        // 新增：在本次列表里、库里从来没有过的
+        let new_count = accounts
+            .iter()
+            .filter(|a| !existing_set.contains(a.sec.as_str()))
+            .count();
 
-        let new_count = accounts.len() as i64 - (existing.len() as i64 - gone);
+        // 消失：在库里、不在本次列表里、且还没标记过
+        let gone: Vec<String> = existing
+            .iter()
+            .filter(|s| !live.contains(s.as_str()) && !marked.contains(*s))
+            .cloned()
+            .collect();
+
+        // 重新出现的：之前标过已取关，现在又在列表里 → 清掉标记
+        let back: Vec<String> = accounts
+            .iter()
+            .filter(|a| marked.contains(&a.sec))
+            .map(|a| a.sec.clone())
+            .collect();
+
+        // 批量写：万级账号逐个 UPDATE 会慢到不可接受（每次都要 prepare + step）
+        mark_unfollowed_bulk(&db, &gone, now);
+        clear_unfollowed_bulk(&db, &back);
+
         state.log(
             &format!(
-                "关注列表差异（共 {} 个关注）：新增 {} 个（按未检查处理），消失 {} 个（按已取关处理）",
-                fetched.total,
-                new_count.max(0),
-                gone
+                "关注列表差异（本次取到 {} 个）：新增 {} 个（按未检查处理），消失 {} 个（按已取关处理）",
+                accounts.len(),
+                new_count,
+                gone.len()
             ),
             "ok",
         );
-        if back > 0 {
-            state.log(&format!("其中 {back} 个重新出现在列表里，已清除「已取关」标记"), "");
+        if !back.is_empty() {
+            state.log(
+                &format!("其中 {} 个重新出现在列表里，已清除「已取关」标记", back.len()),
+                "",
+            );
         }
     }
 
@@ -625,4 +686,45 @@ pub fn run_scan(state: Arc<AppState>, session: Session) {
     }
     state.update(|p| p.current_account = "已完成".into());
     state.log(&format!("本轮结束：检查 {i} 个｜停更 {s_stale}｜正常 {s_active}｜异常 {s_err}"), "ok");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+
+    /// 万级账号批量标记：单条 IN 的绑定变量有上限（999），必须分批，
+    /// 这里用 1000 个验证跨批次写入和事务都正常。
+    #[test]
+    fn bulk_mark_and_clear_across_batches() {
+        let dir = std::env::temp_dir().join("dyc_test_bulk_mark");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("t.db");
+        let db = Db::open(db_path.to_str().unwrap()).unwrap();
+
+        let all: Vec<String> = (0..1000).map(|i| format!("SEC{i}")).collect();
+        for s in &all {
+            db.execute("INSERT INTO accounts (sec_uid) VALUES (?)", &[json!(s)]).unwrap();
+        }
+
+        mark_unfollowed_bulk(&db, &all, 12345);
+        assert_eq!(
+            db.query_int("SELECT COUNT(*) FROM accounts WHERE unfollowed_at=12345", &[]),
+            1000
+        );
+
+        clear_unfollowed_bulk(&db, &all);
+        assert_eq!(
+            db.query_int("SELECT COUNT(*) FROM accounts WHERE unfollowed_at IS NOT NULL", &[]),
+            0
+        );
+
+        // 空切片不应报错，也不应留下未提交的事务
+        mark_unfollowed_bulk(&db, &[], 1);
+        clear_unfollowed_bulk(&db, &[]);
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

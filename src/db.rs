@@ -188,14 +188,6 @@ impl Db {
         );
     }
 
-    /// 清除「已取关」标记（账号重新出现在关注列表里，说明又关注回来了）
-    pub fn clear_unfollowed(&self, sec_uid: &str) {
-        let _ = self.execute(
-            "UPDATE accounts SET unfollowed_at=NULL WHERE sec_uid=? AND unfollowed_at IS NOT NULL",
-            &[Value::from(sec_uid)],
-        );
-    }
-
     fn last_error(&self) -> String {
         let Ok(api) = api() else { return "未知错误".into() };
         unsafe {

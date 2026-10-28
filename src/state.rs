@@ -66,6 +66,8 @@ pub struct UnfollowProgress {
     pub current: String,
     pub wait_text: String,
     pub results: Vec<Value>,
+    /// 预计剩余秒数：按「平均基础间隔 × 剩余个数 + 每 10 个一次的额外间隔」估算
+    pub eta_seconds: Option<i64>,
 }
 
 impl Default for UnfollowProgress {
@@ -79,6 +81,7 @@ impl Default for UnfollowProgress {
             current: String::new(),
             wait_text: String::new(),
             results: Vec::new(),
+            eta_seconds: None,
         }
     }
 }
@@ -235,15 +238,23 @@ impl AppState {
                 let get = |i: usize| r.get(i).and_then(Value::as_str).unwrap_or("").to_string();
                 let ts = get(6).parse::<i64>().ok().filter(|v| *v > 0);
                 let checked = get(9).parse::<i64>().ok().filter(|v| *v > 0);
+                let unfollowed = get(10).parse::<i64>().ok().filter(|v| *v > 0);
                 let days = ts.map(|t| (now - t) / 86400);
                 // 拿不到时间戳时要区分两种情况：
                 //   pending —— 还没检查过（例如列表拉到了但本轮没轮到）
                 //   error   —— 检查过但确实取不到（无作品 / 私密 / 接口异常）
-                let status = match days {
-                    Some(d) if d > stale_days => "stale",
-                    Some(_) => "active",
-                    None if checked.is_none() => "pending",
-                    None => "error",
+                //
+                // 已取关的账号单独一个状态：它们不再是「关注中」，
+                // 既不该计入关注总数，也不该出现在「未检查」里等着被扫。
+                let status = if unfollowed.is_some() {
+                    "unfollowed"
+                } else {
+                    match days {
+                        Some(d) if d > stale_days => "stale",
+                        Some(_) => "active",
+                        None if checked.is_none() => "pending",
+                        None => "error",
+                    }
                 };
                 json!({
                     "nickname": get(2),
@@ -257,7 +268,7 @@ impl AppState {
                     "status": status,
                     "note": get(8),
                     // 「已取关」持久化在数据库里；「已开过」只在本次会话记录，不落库
-                    "unfollowedAt": get(10).parse::<i64>().ok().filter(|v| *v > 0),
+                    "unfollowedAt": unfollowed,
                 })
             })
             .collect()
@@ -265,14 +276,17 @@ impl AppState {
 
     pub fn summary(&self) -> Value {
         let rows = self.derive_rows();
-        let count = |s: &str| rows.iter().filter(|r| r["status"] == s).count();
+        let count = |s: &str| rows.iter().filter(|r| r["status"].as_str() == Some(s)).count();
+        // 关注总数 = 真实还在关注里的账号数，排除已取关的。
+        // 否则库里的历史账号会让这个数字只增不减，和抖音上看到的关注数对不上。
+        let unfollowed = count("unfollowed");
         json!({
-            "total": rows.len(),
+            "total": rows.len() - unfollowed,
             "stale": count("stale"),
             "active": count("active"),
             "error": count("error"),
             "pending": count("pending"),
-            "unfollowed": rows.iter().filter(|r| !r["unfollowedAt"].is_null()).count(),
+            "unfollowed": unfollowed,
             "lastScanAt": self.progress.lock().unwrap().started_at,
         })
     }
@@ -361,6 +375,7 @@ impl AppState {
                 "failed": u.failed,
                 "current": u.current,
                 "waitText": u.wait_text,
+                "etaSeconds": u.eta_seconds,
                 "results": u.results,
                 // 录制到的请求摘要，供用户核对（方法 / type / 用哪种 ID 定位目标）
                 "template": crate::douyin::load_template(&self.cfg().out_dir)

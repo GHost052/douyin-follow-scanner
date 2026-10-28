@@ -125,6 +125,16 @@
   .field .desc{color:var(--sub);font-size:12.5px;margin-top:4px;}
   .field .ctl{flex:none;}
   .note{color:var(--sub);font-size:12.5px;}
+
+  /* 超期阈值滑杆：5 个档位等分，拖动即吸附 */
+  .dset{width:300px;flex:none;}
+  .dset input[type=range]{width:100%;padding:0;border:none;background:none;height:22px;
+    accent-color:var(--accent);cursor:pointer;}
+  .dticks{display:flex;justify-content:space-between;margin-top:-2px;}
+  .dticks span{font-size:11.5px;color:var(--hint);cursor:pointer;padding:1px 5px;border-radius:4px;
+    user-select:none;white-space:nowrap;}
+  .dticks span:hover{background:var(--soft);color:var(--text);}
+  .dticks span.on{color:var(--accent);font-weight:600;}
   .warnbox{margin-top:26px;padding:16px 18px;border-radius:12px;background:#fff8f8;border:1px solid #f5d9d9;}
   .warnbox p{margin:0 0 8px;font-size:13px;color:#8a3b3b;line-height:1.7;}
   .warnbox p:last-child{margin-bottom:0;}
@@ -270,8 +280,26 @@
 
   <section class="view" id="v-settings">
     <div class="field">
-      <div><div class="lab">超期阈值（天）</div><div class="desc">最新作品距今超过多少天算作"未更新"</div></div>
-      <div class="ctl"><input id="setDays" type="number" min="1" max="3650" style="width:110px" /></div>
+      <div>
+        <div class="lab">超期阈值</div>
+        <div class="desc">最新作品距今超过多少天算作「未更新」。主页的统计与列表会同步变化，不用重新扫描。</div>
+      </div>
+      <div class="ctl" style="display:flex;align-items:center;gap:14px">
+        <div class="dset">
+          <input type="range" id="setDaysRange" min="0" max="4" step="1" value="1" oninput="onDaysRange(this.value)" />
+          <div class="dticks">
+            <span data-d="30" onclick="pickDays(30)">30</span>
+            <span data-d="60" onclick="pickDays(60)">60</span>
+            <span data-d="90" onclick="pickDays(90)">90</span>
+            <span data-d="180" onclick="pickDays(180)">180</span>
+            <span data-d="360" onclick="pickDays(360)">360</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input id="setDays" type="number" min="1" max="3650" style="width:86px" oninput="onDaysInput(this.value)" />
+          <span class="note">天</span>
+        </div>
+      </div>
     </div>
     <div class="field">
       <div><div class="lab">扫描速度</div><div class="desc">越慢越不容易触发抖音风控</div></div>
@@ -397,9 +425,18 @@ function render(){
 
   syncUnfollowBar();
 
+  // 日志：正序渲染（最新在底部）。用户停在底部时跟随最新，
+  // 一旦往上翻看历史就不再动它——之前每 1.5 秒强制滚回顶部，
+  // 根本没法看前面的记录。
   const log = document.getElementById('log');
-  if((S.log||[]).length){
-    log.innerHTML = S.log.slice().reverse().map(l=>`<div class="${l.level||''}"><span class="t">${esc(l.t)}</span>${esc(l.msg)}</div>`).join('');
+  const list = S.log || [];
+  if (list.length) {
+    const stick = LOG_STICK;
+    const prevTop = log.scrollTop;
+    log.innerHTML = list
+      .map(l => `<div class="${l.level||''}"><span class="t">${esc(l.t)}</span>${esc(l.msg)}</div>`)
+      .join('');
+    log.scrollTop = stick ? log.scrollHeight : prevTop;
   }
 }
 
@@ -407,19 +444,39 @@ function render(){
 let SHOW_LOG = false;
 try { SHOW_LOG = localStorage.getItem('showLog') === '1'; } catch (e) { /* ignore */ }
 
+// 日志是否跟随最新。用户往上翻时置 false，翻回底部再置 true。
+let LOG_STICK = true;
+
 function toggleLog(){
   SHOW_LOG = !SHOW_LOG;
   try { localStorage.setItem('showLog', SHOW_LOG ? '1' : '0'); } catch (e) { /* ignore */ }
   syncLogPanel();
+  if (SHOW_LOG) {
+    // 刚打开面板时直接看到最新一条；之后是否跟随由用户滚动决定
+    LOG_STICK = true;
+    const l = document.getElementById('log');
+    if (l) l.scrollTop = l.scrollHeight;
+  }
   checkNotices();
 }
+// 只负责显隐，**不要**在这里动滚动位置——每次 tick 都会调它，
+// 一旦在这里滚到底，用户往上翻看历史就会被强行拉回去。
 function syncLogPanel(){
   const m = document.querySelector('main');
   if (m) m.classList.toggle('withlog', SHOW_LOG);
   const b = document.getElementById('logToggle');
   if (b) b.style.background = SHOW_LOG ? 'var(--soft)' : '';
-  if (SHOW_LOG) { const l = document.getElementById('log'); if (l) l.scrollTop = 0; }
 }
+
+// 滚动位置决定是否继续跟随。留 24px 容差，避免像素级误差。
+// 脚本在 body 末尾，#log 已经存在，直接绑定即可（不依赖 DOMContentLoaded）。
+(function initLogScroll(){
+  const l = document.getElementById('log');
+  if (!l) return;
+  l.addEventListener('scroll', () => {
+    LOG_STICK = l.scrollHeight - l.scrollTop - l.clientHeight < 24;
+  });
+})();
 
 // 手动刷新：重新读取列表与标记
 async function refreshResults(){
@@ -844,12 +901,22 @@ function syncUfModal(){
     idle: '准备中…', capturing: '正在录制取关请求…',
     running: '正在取关…', done: '已完成', error: '出错了',
   };
-  document.getElementById('ufmStatus').textContent = map[st] || st;
-  document.getElementById('ufmBar').style.width = (total ? Math.min(100, done / total * 100) : 0) + '%';
+  const pct = total ? Math.min(100, done / total * 100) : 0;
+  document.getElementById('ufmStatus').textContent =
+    (map[st] || st) + (total ? `　${done} / ${total}（${pct.toFixed(0)}%）` : '');
+  document.getElementById('ufmBar').style.width = pct + '%';
 
   const rows = [];
-  if (total) rows.push(`进度：${done} / ${total}`);
-  if (st === 'running' || st === 'done') rows.push(`成功 ${u.success || 0} 个｜失败 ${u.failed || 0} 个`);
+  if (st === 'running') rows.push(`成功 ${u.success || 0} 个｜失败 ${u.failed || 0} 个`);
+  else if (st === 'done' || st === 'error') rows.push(`成功 ${u.success || 0} 个｜失败 ${u.failed || 0} 个`);
+
+  // 预计完成时间：剩余秒数 → 具体时刻，比「还剩 X 分」直观
+  if (st === 'running' && u.etaSeconds > 0) {
+    const end = new Date(Date.now() + u.etaSeconds * 1000);
+    const hh = String(end.getHours()).padStart(2, '0');
+    const mm = String(end.getMinutes()).padStart(2, '0');
+    rows.push(`预计剩余 ${fmtDur(u.etaSeconds)}｜约 ${hh}:${mm} 完成`);
+  }
   if (u.waitText) rows.push(u.waitText);
   if (u.current && st === 'running') rows.push('当前：' + u.current);
   if (st === 'done') {
@@ -878,10 +945,13 @@ function checkNotices(){
 }
 
 // ---- 一键取关（不可逆，多重确认）----
+// 超期未更新与异常账号都提供取关：这两类都是「不想再关注」的账号。
 function syncUnfollowBar(){
   const bar = document.getElementById('unfollowBar');
   if (!bar) return;
-  bar.style.display = (window.__DESKTOP__ && TYPE === 'stale') ? '' : 'none';
+  const canUnfollow = TYPE === 'stale' || TYPE === 'error';
+  bar.style.display = (window.__DESKTOP__ && canUnfollow) ? '' : 'none';
+  const kindName = TYPE === 'error' ? '异常账号' : '超期未更新';
 
   const u = (S && S.unfollow) || {};
   const st = document.getElementById('ufStatus');
@@ -893,7 +963,8 @@ function syncUnfollowBar(){
     hint.textContent = u.waitText || '请在弹出的浏览器里点一次「已关注」→「取消关注」';
   } else if (u.status === 'running') {
     st.textContent = `进行中 ${u.done || 0}/${u.total || 0}`;
-    hint.textContent = `成功 ${u.success || 0}｜失败 ${u.failed || 0}｜${u.waitText || '每个间隔 3~8 秒，每 10 个再停 10~20 秒'}`;
+    const eta = u.etaSeconds ? `｜预计剩余 ${fmtDur(u.etaSeconds)}` : '';
+    hint.textContent = `成功 ${u.success || 0}｜失败 ${u.failed || 0}｜${u.waitText || '每个间隔 3~8 秒，每 10 个再停 10~20 秒'}${eta}`;
   } else if (u.status === 'done') {
     st.textContent = '已完成';
     hint.textContent = `成功 ${u.success || 0}｜失败 ${u.failed || 0}`;
@@ -901,7 +972,7 @@ function syncUnfollowBar(){
     st.textContent = '已就绪';
     const t = u.template || {};
     const detail = t.method ? `（${t.method}${t.type != null ? '，type=' + t.type : ''}${t.byUserId ? '，按 user_id' : ''}${t.bySecUid ? '，按 sec_user_id' : ''}）` : '';
-    hint.textContent = `已录制取关请求${detail}。先勾选要取关的账号，再点「取关…」。取关不可逆，建议先用 1 个验证。`;
+    hint.textContent = `已录制取关请求${detail}。在「${kindName}」里勾选账号后点「取关…」。取关不可逆，建议先用 1 个验证。`;
   } else {
     st.textContent = '未录制';
     hint.textContent = '尚未录制取关请求。请到「设置」页点「录制取关请求」，打开一个账号主页手动取消关注一次，程序记下这次请求后用于批量执行。';
@@ -964,10 +1035,14 @@ async function startUnfollow(){
       .filter(r => r.uid || r.secUid)
       .map(r => ({ uid: r.uid || '', secUid: r.secUid || '' }));
     if (!targets.length) { alert('请先勾选要取关的账号'); return; }
+    // 预计耗时 = 平均基础间隔 5.5 秒 × 个数 + 每 10 个一次的额外间隔 15 秒
+    const n = targets.length;
+    const etaMin = Math.round((n * 5.5 + Math.floor(n / 10) * 15) / 60);
     if (!confirm(
-      `确定取关已勾选的 ${targets.length} 个账号吗？\n\n` +
+      `确定取关已勾选的 ${n} 个账号吗？\n\n` +
       `· 此操作不可撤销\n` +
       `· 按勾选顺序执行，每个间隔 3~8 秒，每满 10 个再停 10~20 秒\n` +
+      `· 预计耗时约 ${etaMin} 分钟（实际会略长，含请求耗时）\n` +
       `· 命中风控会立即自动停止\n\n` +
       `确定继续？`
     )) return;
@@ -993,9 +1068,37 @@ async function stopUnfollow(){
   setTimeout(tick, 400);
 }
 
+// ---- 超期阈值：档位滑杆 + 自定义输入 ----
+// 滑杆 5 等分对应 30/60/90/180/360，拖动即吸附到档位。
+// 线性滑块做不到：30~90 只占 18% 的行程，根本拖不准。
+// 需要 45、500 这类值就走右侧数字框（滑块保持最近档位）。
+const DAY_STEPS = [30, 60, 90, 180, 360];
+
+function syncDayTicks(n){
+  document.querySelectorAll('.dticks span').forEach(s => {
+    s.className = (+s.dataset.d === +n) ? 'on' : '';
+  });
+  const idx = DAY_STEPS.indexOf(+n);
+  if (idx >= 0) document.getElementById('setDaysRange').value = idx;
+}
+function onDaysRange(i){
+  const n = DAY_STEPS[+i] ?? 60;
+  document.getElementById('setDays').value = n;
+  syncDayTicks(n);
+}
+function pickDays(n){
+  document.getElementById('setDays').value = n;
+  syncDayTicks(n);
+}
+function onDaysInput(v){
+  const n = Math.max(1, Math.min(3650, +v || 1));
+  syncDayTicks(n);
+}
 function fillSettings(){
   const s = S.settings || {};
-  document.getElementById('setDays').value = s.staleDays ?? 60;
+  const d = s.staleDays ?? 60;
+  document.getElementById('setDays').value = d;
+  syncDayTicks(d);
   document.getElementById('setDir').textContent = (S.settings && S.settings.outDir) || '—';
 
   // 取关请求录制状态
@@ -1017,10 +1120,13 @@ function fillSettings(){
   sel.value = s.speed || 'conservative';
 }
 async function saveSettings(){
-  const body = { staleDays: document.getElementById('setDays').value, speed: document.getElementById('setSpeed').value };
+  const days = +document.getElementById('setDays').value || 60;
+  const body = { staleDays: days, speed: document.getElementById('setSpeed').value };
   await api('/api/settings', 'POST', body);
   await tick();
-  alert('设置已保存');
+  // 阈值变了，主页的统计与列表要跟着重算（derive_rows 是实时按阈值算的）
+  await loadResults();
+  alert(`设置已保存\n\n超期阈值：${days} 天\n主页统计与列表已同步`);
 }
 async function clearData(){
   const alsoLogin = document.getElementById('clearLogin').checked;
