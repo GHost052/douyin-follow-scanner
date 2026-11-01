@@ -239,15 +239,15 @@
       <button onclick="refreshResults()" title="重新读取列表与标记">刷新</button>
 
     </div>
-    <!-- 按距今天数批量勾选 -->
+    <!-- 按距今天数批量勾选。滑杆按「账号数量」等分，不是按天数线性 -->
     <div id="dayPick" style="display:none;align-items:center;gap:10px;font-size:12.5px;color:var(--sub);margin-bottom:12px;flex-wrap:wrap">
-      <span>按距今天数批量勾选：</span>
-      <!-- 一个滑杆两个手柄：左右各拖一个 -->
+      <span title="滑杆按账号数量等分：每个账号占的轨道长度相同，账号密集的天数区间占得更长">按距今天数批量勾选：</span>
+      <!-- 一个滑杆两个手柄：左右各拖一个。取值 0~1000，映射到排序后的第几个账号 -->
       <div class="dual">
         <div class="track"></div>
         <div class="fill" id="dayFill"></div>
-        <input type="range" id="dayMin" min="0" max="365" value="0" oninput="syncDayLabel()" />
-        <input type="range" id="dayMax" min="0" max="365" value="365" oninput="syncDayLabel()" />
+        <input type="range" id="dayMin" min="0" max="1000" step="1" value="0" oninput="syncDayLabel()" />
+        <input type="range" id="dayMax" min="0" max="1000" step="1" value="1000" oninput="syncDayLabel()" />
       </div>
       <span><b id="dayMinVal" style="color:var(--text)">0</b> ~ <b id="dayMaxVal" style="color:var(--text)">365</b> 天</span>
       <span id="dayMatch" style="color:var(--accent);font-weight:600"></span>
@@ -591,6 +591,14 @@ function clearSel(){
 }
 
 // ---- 按距今天数批量勾选 ----
+// 滑杆**不是**按天数线性映射，而是按「账号数量」等分：
+// 把当前列表里的账号按天数排序，滑杆 0~1000 映射到「排序后的第几个账号」。
+//
+// 为什么：按天数线性时，100~200 天哪怕只有 1 个账号也会占掉一大段轨道，
+// 而 1~100 天挤了 100 个账号却只占同样长——拖起来完全没手感。
+// 按账号数等分后，每个账号占的轨道一样长，拖动距离和选中数量成正比。
+let DAY_IDX = [];   // 当前列表里所有账号的「距今天数」，升序
+
 function syncDaySliders(){
   const wrap = document.getElementById('dayPick');
   const mn = document.getElementById('dayMin'), mx = document.getElementById('dayMax');
@@ -600,27 +608,38 @@ function syncDaySliders(){
   wrap.style.display = show ? 'flex' : 'none';
   if (!show) return;
 
-  const ds = VIEW.map(r => r.days).filter(d => typeof d === 'number');
-  // 滑杆两端自动跟随当前数据的最小/最大天数
-  const lo = ds.length ? Math.min(...ds) : 0;
-  const hi = ds.length ? Math.max(...ds) : 365;
-  const prevLo = +mn.min, prevHi = +mx.max;
-  mn.min = mx.min = lo;
-  mn.max = mx.max = hi;
+  DAY_IDX = VIEW.map(r => r.days)
+    .filter(d => typeof d === 'number')
+    .sort((a, b) => a - b);
 
-  // 首次进入、或数据范围变了，就把两个手柄拉到两端
-  const rangeChanged = prevLo !== lo || prevHi !== hi;
-  if (!mn.dataset.init || rangeChanged || +mn.value < lo || +mn.value > hi) mn.value = lo;
-  if (!mx.dataset.init || rangeChanged || +mx.value < lo || +mx.value > hi) mx.value = hi;
-  mn.dataset.init = '1';
-  mx.dataset.init = '1';
+  // 数据变了就把两个手柄拉回两端，否则旧的百分比会指向完全不同的账号
+  const n = DAY_IDX.length;
+  const sig = n + '|' + (n ? DAY_IDX[0] + ':' + DAY_IDX[n - 1] : '');
+  if (mn.dataset.sig !== sig) {
+    mn.value = 0;
+    mx.value = 1000;
+    mn.dataset.sig = sig;
+    mx.dataset.sig = sig;
+  }
   syncDayLabel();
+}
+
+// 滑杆值(0~1000) → 排序后的下标
+function dayIdxOf(v){
+  const n = DAY_IDX.length;
+  if (!n) return 0;
+  return Math.max(0, Math.min(n - 1, Math.round(v / 1000 * (n - 1))));
+}
+// 滑杆值(0~1000) → 实际天数
+function dayAt(v){
+  const n = DAY_IDX.length;
+  return n ? DAY_IDX[dayIdxOf(v)] : 0;
 }
 
 function dayRange(){
   const a = +document.getElementById('dayMin').value;
   const b = +document.getElementById('dayMax').value;
-  return { lo: Math.min(a, b), hi: Math.max(a, b) };
+  return { lo: dayAt(Math.min(a, b)), hi: dayAt(Math.max(a, b)) };
 }
 
 function syncDayLabel(){
@@ -635,18 +654,20 @@ function syncDayLabel(){
   }
   const lo = Math.min(a, b), hi = Math.max(a, b);
 
-  // 更新轨道上的高亮段
+  // 高亮段直接按滑杆值算（0~1000 → 0~100%）
   const fill = document.getElementById('dayFill');
   if (fill) {
-    const span = (+mx.max - +mn.min) || 1;
-    fill.style.left = ((lo - +mn.min) / span * 100) + '%';
-    fill.style.right = (100 - (hi - +mn.min) / span * 100) + '%';
+    fill.style.left = (lo / 10) + '%';
+    fill.style.right = (100 - hi / 10) + '%';
   }
 
-  document.getElementById('dayMinVal').textContent = lo;
-  document.getElementById('dayMaxVal').textContent = hi;
-  const n = VIEW.filter(r => r.secUid && typeof r.days === 'number' && r.days >= lo && r.days <= hi).length;
-  document.getElementById('dayMatch').textContent = n ? `匹配 ${n} 个` : '无匹配';
+  const dLo = dayAt(lo), dHi = dayAt(hi);
+  document.getElementById('dayMinVal').textContent = dLo;
+  document.getElementById('dayMaxVal').textContent = dHi;
+  const n = VIEW.filter(r => r.secUid && typeof r.days === 'number' && r.days >= dLo && r.days <= dHi).length;
+  const total = DAY_IDX.length;
+  // 文案要短：这行还有滑杆、天数、按钮，太长会挤在一起
+  document.getElementById('dayMatch').textContent = n ? `${n}/${total} 个` : '无匹配';
 }
 
 // 一键勾选当前列表里「已开过」的账号（锁定的跳过）
