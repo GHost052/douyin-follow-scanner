@@ -1,5 +1,6 @@
 //! 应用共享状态：进度、日志、控制开关、配置、数据库句柄。
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Mutex, RwLock};
@@ -106,6 +107,9 @@ pub struct AppState {
     /// None = 未检测；Some(true/false) = 已检测
     pub logged_in: Mutex<Option<bool>>,
     pub self_sec_uid: Mutex<String>,
+    /// 被锁定的账号：不可勾选、不可取关。
+    /// 存独立文件 `locked.json`，不动数据库结构（加列属于 schema 变更）。
+    pub locked: Mutex<HashSet<String>>,
     pub settings_path: PathBuf,
     pub log_path: PathBuf,
 }
@@ -145,6 +149,7 @@ impl AppState {
             running: AtomicBool::new(false),
             logged_in: Mutex::new(None),
             self_sec_uid: Mutex::new(String::new()),
+            locked: Mutex::new(HashSet::new()),
             settings_path,
             log_path,
             unfollow: Mutex::new(UnfollowProgress::default()),
@@ -159,6 +164,48 @@ impl AppState {
     /// 取关是否已具备执行条件：录制过请求模板
     pub fn unfollow_ready(&self) -> bool {
         crate::douyin::load_template(&self.cfg().out_dir).is_some()
+    }
+
+    // ---------------- 锁定 ----------------
+    fn locked_path(&self) -> PathBuf {
+        self.cfg().out_dir.join("locked.json")
+    }
+
+    pub fn load_locked(&self) {
+        let Ok(text) = std::fs::read_to_string(self.locked_path()) else { return };
+        let Ok(v) = serde_json::from_str::<Vec<String>>(&text) else { return };
+        *self.locked.lock().unwrap() = v.into_iter().collect();
+    }
+
+    fn save_locked(&self) {
+        let list: Vec<String> = self.locked.lock().unwrap().iter().cloned().collect();
+        let _ = std::fs::write(
+            self.locked_path(),
+            serde_json::to_string(&list).unwrap_or_default(),
+        );
+    }
+
+    pub fn is_locked(&self, sec: &str) -> bool {
+        self.locked.lock().unwrap().contains(sec)
+    }
+
+    /// 设置锁定状态，返回设置后的值
+    pub fn set_locked(&self, sec: &str, locked: bool) -> bool {
+        {
+            let mut s = self.locked.lock().unwrap();
+            if locked {
+                s.insert(sec.to_string());
+            } else {
+                s.remove(sec);
+            }
+        }
+        self.save_locked();
+        locked
+    }
+
+    pub fn clear_locked(&self) {
+        self.locked.lock().unwrap().clear();
+        let _ = std::fs::remove_file(self.locked_path());
     }
 
     /// 记录一条需要弹窗告知用户的消息（错误 / 重要提醒）
@@ -233,9 +280,11 @@ impl AppState {
             .unwrap_or_default();
         let now = now_sec();
         let stale_days = self.cfg().stale_days;
+        let locked_set = self.locked.lock().unwrap();
         rows.into_iter()
             .map(|r| {
                 let get = |i: usize| r.get(i).and_then(Value::as_str).unwrap_or("").to_string();
+                let sec = get(0);
                 let ts = get(6).parse::<i64>().ok().filter(|v| *v > 0);
                 let checked = get(9).parse::<i64>().ok().filter(|v| *v > 0);
                 let unfollowed = get(10).parse::<i64>().ok().filter(|v| *v > 0);
@@ -259,7 +308,7 @@ impl AppState {
                 json!({
                     "nickname": get(2),
                     "uid": get(1),
-                    "secUid": get(0),
+                    "secUid": sec,
                     "homeUrl": get(3),
                     "avatar": get(4),
                     "awemeCount": get(5).parse::<i64>().unwrap_or(0),
@@ -269,6 +318,8 @@ impl AppState {
                     "note": get(8),
                     // 「已取关」持久化在数据库里；「已开过」只在本次会话记录，不落库
                     "unfollowedAt": unfollowed,
+                    // 锁定的账号不能被勾选、不能被取关
+                    "locked": locked_set.contains(&sec),
                 })
             })
             .collect()

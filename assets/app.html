@@ -98,6 +98,15 @@
   td.days{color:var(--red);font-weight:500;text-align:right;}
   .empty{padding:40px;text-align:center;color:var(--hint);font-size:13px;white-space:normal;}
 
+  /* 锁定：锁图标 + 锁定行灰化 */
+  .lockbtn{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;
+    margin-left:6px;border-radius:5px;cursor:pointer;vertical-align:-4px;color:var(--hint);}
+  .lockbtn:hover{background:var(--soft);color:var(--text);}
+  .lockbtn.on{color:var(--amber);}
+  tr.locked td.name,tr.locked td.id,tr.locked td.num{color:var(--hint);}
+  tr.locked td.name{text-decoration:line-through;text-decoration-color:var(--hint);}
+  tr.locked input[type=checkbox]{opacity:.35;cursor:not-allowed;}
+
   details{border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin-top:22px;}
   details summary{cursor:pointer;font-size:13.5px;color:var(--sub);}
   .log{max-height:320px;overflow:auto;margin-top:12px;font-family:ui-monospace,Consolas,monospace;font-size:12px;}
@@ -126,7 +135,7 @@
   .field .ctl{flex:none;}
   .note{color:var(--sub);font-size:12.5px;}
 
-  /* 超期阈值滑杆：5 个档位等分，拖动即吸附 */
+  /* 超期阈值滑杆：6 档等分（5 个固定档 + 自定义） */
   .dset{width:300px;flex:none;}
   .dset input[type=range]{width:100%;padding:0;border:none;background:none;height:22px;
     accent-color:var(--accent);cursor:pointer;}
@@ -221,6 +230,10 @@
       <span id="selCount" style="font-size:13px;color:var(--accent);font-weight:600;display:none;padding:0 4px"></span>
       <button id="selOpened" onclick="selectOpened()" style="display:none;font-size:13px;padding:9px 8px" title="把当前列表里「已开过」的账号全部勾上">选中已开过的</button>
       <button id="selClear" onclick="clearSel()" style="display:none;font-size:13px;padding:9px 8px">清空选择</button>
+      <label id="reopenWrap" style="display:none;align-items:center;gap:4px;font-size:12.5px;color:var(--sub);cursor:pointer;white-space:nowrap" title="勾上后，已打开过的账号也会重新打开（默认跳过它们，方便中途停止后接着开）">
+        <input type="checkbox" id="reopenOpened" onchange="onReopenChange(this.checked)" style="width:auto;padding:0">
+        <span>重开已打开</span>
+      </label>
       <button id="openAllBtn" onclick="openAllHomepages()" style="display:none">打开选中主页</button>
       <button id="openAllStopBtn" onclick="stopOpenAll()" style="display:none;font-size:13px;padding:9px 8px">停止</button>
       <button onclick="refreshResults()" title="重新读取列表与标记">刷新</button>
@@ -286,13 +299,14 @@
       </div>
       <div class="ctl" style="display:flex;align-items:center;gap:14px">
         <div class="dset">
-          <input type="range" id="setDaysRange" min="0" max="4" step="1" value="1" oninput="onDaysRange(this.value)" />
+          <input type="range" id="setDaysRange" min="0" max="5" step="1" value="1" oninput="onDaysRange(this.value)" />
           <div class="dticks">
-            <span data-d="30" onclick="pickDays(30)">30</span>
-            <span data-d="60" onclick="pickDays(60)">60</span>
-            <span data-d="90" onclick="pickDays(90)">90</span>
-            <span data-d="180" onclick="pickDays(180)">180</span>
-            <span data-d="360" onclick="pickDays(360)">360</span>
+            <span data-i="0" onclick="pickDays(0)">30</span>
+            <span data-i="1" onclick="pickDays(1)">60</span>
+            <span data-i="2" onclick="pickDays(2)">90</span>
+            <span data-i="3" onclick="pickDays(3)">180</span>
+            <span data-i="4" onclick="pickDays(4)">360</span>
+            <span data-i="5" onclick="pickDays(5)">自定义</span>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:6px">
@@ -514,6 +528,26 @@ function shortId(r){
 // 「已取关」持久化在数据库里，由后端返回。
 let OPENED = new Set();
 
+// 锁图标（内联 SVG，避免 emoji 在不同字体下渲染不一致）
+const LOCK_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+const UNLOCK_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-1.8"/></svg>';
+
+// 锁定 / 解锁。锁定后该账号不可勾选、不可取关（后端也会再过滤一层）。
+async function toggleLock(sec){
+  if (!sec) return;
+  const row = ROWS.find(r => r.secUid === sec);
+  const next = !(row && row.locked);
+  const r = await api('/api/lock', 'POST', { secUid: sec, locked: next });
+  if (r && r.ok === false) {
+    alert('操作失败：\n\n' + (r.message || '未知原因'));
+    return;
+  }
+  if (row) row.locked = (r && typeof r.locked === 'boolean') ? r.locked : next;
+  // 锁定后立刻从选中集合里摘掉，避免「已选 N 个」里还算着它
+  if (row && row.locked) SELECTED.delete(sec);
+  renderResults();
+}
+
 // 勾选状态。VIEW 是当前表格实际显示的行（含搜索过滤），
 // 「已选数量」与「打开主页 / 取关」都以二者的交集为准，所见即所操作。
 let SELECTED = new Set();
@@ -533,17 +567,20 @@ function selectedRows(){
   // 以当前分类的全部行为准（ROWS），不依赖 VIEW。
   // VIEW 会被搜索 / 隐藏已取关等重建，之前用 VIEW 会出现
   // 「明明勾了却说没选中」的问题。
-  return ROWS.filter(r => r.secUid && SELECTED.has(r.secUid));
+  // 锁定的账号一律排除，即使 SELECTED 里还有残留（比如先选后锁）。
+  return ROWS.filter(r => r.secUid && SELECTED.has(r.secUid) && !r.locked);
 }
 function onRowSelect(cb){
   const uid = cb.dataset.uid;
   if (!uid) { cb.checked = false; return; }
+  const row = ROWS.find(r => r.secUid === uid);
+  if (row && row.locked) { cb.checked = false; return; } // 锁定的不可勾选
   if (cb.checked) SELECTED.add(uid); else SELECTED.delete(uid);
   updateSelCount();
 }
 function toggleSelectAll(checked){
   VIEW.forEach(r => {
-    if (!r.secUid) return;
+    if (!r.secUid || r.locked) return;   // 锁定的跳过
     if (checked) SELECTED.add(r.secUid); else SELECTED.delete(r.secUid);
   });
   renderResults();
@@ -612,15 +649,15 @@ function syncDayLabel(){
   document.getElementById('dayMatch').textContent = n ? `匹配 ${n} 个` : '无匹配';
 }
 
-// 一键勾选当前列表里「已开过」的账号
+// 一键勾选当前列表里「已开过」的账号（锁定的跳过）
 function selectOpened(){
   SELECTED.clear();
   let n = 0;
   VIEW.forEach(r => {
-    if (r.secUid && OPENED.has(r.secUid)) { SELECTED.add(r.secUid); n++; }
+    if (r.secUid && !r.locked && OPENED.has(r.secUid)) { SELECTED.add(r.secUid); n++; }
   });
   renderResults();
-  if (!n) alert('当前列表没有「已开过」的账号');
+  if (!n) alert('当前列表没有可选的「已开过」账号（锁定的不算）');
 }
 
 function selectByDays(){
@@ -628,11 +665,11 @@ function selectByDays(){
   SELECTED.clear();
   let n = 0;
   VIEW.forEach(r => {
-    if (!r.secUid || typeof r.days !== 'number') return;
+    if (!r.secUid || r.locked || typeof r.days !== 'number') return;
     if (r.days >= lo && r.days <= hi) { SELECTED.add(r.secUid); n++; }
   });
   renderResults();
-  if (!n) alert(`没有距今天数在 ${lo} ~ ${hi} 天之间的账号`);
+  if (!n) alert(`没有距今天数在 ${lo} ~ ${hi} 天之间的可选账号（锁定的不算）`);
 }
 function updateSelCount(){
   const n = selectedRows().length;
@@ -646,13 +683,16 @@ function updateSelCount(){
   // 本次会话有「已开过」的账号时，才显示这个快捷勾选按钮
   const so = document.getElementById('selOpened');
   if (so) {
-    const openedInView = VIEW.filter(r => r.secUid && OPENED.has(r.secUid)).length;
+    const openedInView = VIEW.filter(r => r.secUid && !r.locked && OPENED.has(r.secUid)).length;
     so.style.display = openedInView ? '' : 'none';
     so.textContent = openedInView ? `选中已开过的（${openedInView}）` : '选中已开过的';
   }
-  // 表头全选框：当前页全部选中才打勾
+  // 表头全选框：所有「可选中」的行都选中才打勾
   const sa = document.getElementById('selAll');
-  if (sa) sa.checked = VIEW.length > 0 && selectedRows().length === VIEW.length;
+  if (sa) {
+    const selectable = VIEW.filter(r => !r.locked).length;
+    sa.checked = selectable > 0 && selectedRows().length === selectable;
+  }
 }
 
 function renderResults(){
@@ -680,14 +720,22 @@ function renderResults(){
     return s;
   };
   const selCell = r => '<td style="white-space:nowrap"><input type="checkbox" class="sel" data-uid="' + esc(r.secUid||'') + '" '
-    + (SELECTED.has(r.secUid) ? 'checked' : '') + ' onchange="onRowSelect(this)" style="width:auto;padding:0">'
+    + (SELECTED.has(r.secUid) && !r.locked ? 'checked' : '') + (r.locked ? ' disabled' : '')
+    + ' onchange="onRowSelect(this)" style="width:auto;padding:0">'
     + mark(r) + '</td>';
-  const openCell = r => '<td><a href="#" data-url="' + esc(r.homeUrl) + '" data-sec="' + esc(r.secUid||'')
-    + '" onclick="openLink(this.dataset.url,this.dataset.sec);return false;">打开</a></td>';
+  // 主页列：打开 + 锁。锁定后该账号不可勾选、不可取关。
+  const openCell = r => '<td style="white-space:nowrap"><a href="#" data-url="' + esc(r.homeUrl)
+    + '" data-sec="' + esc(r.secUid||'')
+    + '" onclick="openLink(this.dataset.url,this.dataset.sec);return false;">打开</a>'
+    + '<span class="lockbtn' + (r.locked ? ' on' : '') + '" data-sec="' + esc(r.secUid||'') + '"'
+    + ' onclick="toggleLock(this.dataset.sec)" title="'
+    + (r.locked ? '已锁定：不可勾选、不可取关。点击解锁' : '锁定后不可勾选、不可取关')
+    + '">' + (r.locked ? LOCK_SVG : UNLOCK_SVG) + '</span></td>';
+  const rowCls = r => r.locked ? ' class="locked"' : '';
 
   if(TYPE==='error'){
-    thead.innerHTML = '<tr>'+selHead+'<th style="width:22%">账号名</th><th style="width:18%">账号ID</th><th>异常原因</th><th style="width:64px">主页</th></tr>';
-    tbody.innerHTML = rows.length ? rows.map(r=>`<tr>
+    thead.innerHTML = '<tr>'+selHead+'<th style="width:22%">账号名</th><th style="width:18%">账号ID</th><th>异常原因</th><th style="width:96px">主页</th></tr>';
+    tbody.innerHTML = rows.length ? rows.map(r=>`<tr${rowCls(r)}>
       ${selCell(r)}
       <td class="name" title="${esc(r.nickname)}">${esc(r.nickname)}</td>
       <td class="id" title="${esc(r.uid||r.secUid)}">${esc(shortId(r))}</td>
@@ -695,8 +743,8 @@ function renderResults(){
       ${openCell(r)}</tr>`).join('')
       : '<tr><td colspan="5" class="empty">暂无数据</td></tr>';
   } else {
-    thead.innerHTML = '<tr>'+selHead+'<th style="width:22%">账号名</th><th style="width:18%">账号ID</th><th style="width:15%">最后更新</th><th style="width:13%;text-align:right">距今天数</th><th style="width:64px">主页</th></tr>';
-    tbody.innerHTML = rows.length ? rows.map(r=>`<tr>
+    thead.innerHTML = '<tr>'+selHead+'<th style="width:22%">账号名</th><th style="width:18%">账号ID</th><th style="width:15%">最后更新</th><th style="width:13%;text-align:right">距今天数</th><th style="width:96px">主页</th></tr>';
+    tbody.innerHTML = rows.length ? rows.map(r=>`<tr${rowCls(r)}>
       ${selCell(r)}
       <td class="name" title="${esc(r.nickname)}">${esc(r.nickname)}</td>
       <td class="id" title="${esc(r.uid||r.secUid)}">${esc(shortId(r))}</td>
@@ -748,15 +796,32 @@ function openLink(url, secUid){
 }
 
 // ---- 一键打开全部主页 ----
-// 逐个用系统默认浏览器打开当前分类下的所有主页，每打开 1 个随机停顿 0.5~2.5 秒。
+// 逐个用系统默认浏览器打开当前分类下的所有主页，每打开 1 个随机停顿 1~3 秒。
 // 仅在桌面版提供：浏览器版会被弹窗拦截器挡掉。
 const OPEN_ALL = { running: false, stop: false, resume: null };
+
+// 是否重新打开「已开过」的主页。默认关闭：
+// 默认跳过是为了「中途停止后接着开」，勾上则全量重开。
+let REOPEN_OPENED = false;
+try { REOPEN_OPENED = localStorage.getItem('reopenOpened') === '1'; } catch (e) { /* ignore */ }
+
+function onReopenChange(checked){
+  REOPEN_OPENED = !!checked;
+  try { localStorage.setItem('reopenOpened', REOPEN_OPENED ? '1' : '0'); } catch (e) { /* ignore */ }
+  syncOpenAllBtn();
+}
 
 function syncOpenAllBtn(){
   const btn = document.getElementById('openAllBtn');
   if (!btn) return;
   const show = !!window.__DESKTOP__ && TYPE !== 'all';
   btn.style.display = show ? '' : 'none';
+  const wrap = document.getElementById('reopenWrap');
+  if (wrap) {
+    wrap.style.display = show ? 'flex' : 'none';
+    const cb = document.getElementById('reopenOpened');
+    if (cb) cb.checked = REOPEN_OPENED;
+  }
   const stopBtn = document.getElementById('openAllStopBtn');
   if (stopBtn) stopBtn.style.display = (show && OPEN_ALL.running) ? '' : 'none';
   if (!OPEN_ALL.running) {
@@ -765,7 +830,9 @@ function syncOpenAllBtn(){
     try {
       const sel = selectedRows().filter(r => r.homeUrl);
       const rest = sel.filter(r => !(r.secUid && OPENED.has(r.secUid))).length;
-      if (sel.length && rest && rest < sel.length) label = `继续打开剩余 ${rest} 个`;
+      if (!REOPEN_OPENED && sel.length && rest && rest < sel.length) {
+        label = `继续打开剩余 ${rest} 个`;
+      }
     } catch (e) { /* 列表还没加载好就算了 */ }
     btn.textContent = label;
   }
@@ -794,14 +861,18 @@ async function openAllHomepages(){
   const label = { stale: '超期未更新', error: '异常账号', pending: '未检查' }[TYPE];
   if (!label) { alert('请先切换到「超期未更新」「异常账号」或「未检查」分类'); return; }
 
-  // 只对勾选的账号生效；已经打开过的跳过，
-  // 这样中途按「停止」后再点一次就是「接着打开」而不是从头再来
+  // 只对勾选的账号生效。默认跳过已打开过的，
+  // 这样中途按「停止」后再点一次就是「接着打开」而不是从头再来；
+  // 勾了「重开已打开」则全量重开。
   const all = selectedRows().filter(r => r.homeUrl);
   if (!all.length) { alert(`请先在「${label}」列表里勾选要打开的账号`); return; }
-  const targets = all.filter(r => !(r.secUid && OPENED.has(r.secUid)));
+  const targets = REOPEN_OPENED ? all : all.filter(r => !(r.secUid && OPENED.has(r.secUid)));
   const skipped = all.length - targets.length;
   if (!targets.length) {
-    alert(`勾选的 ${all.length} 个账号都已经打开过了`);
+    alert(
+      `勾选的 ${all.length} 个账号都已经打开过了。\n\n` +
+      `想重新打开的话，勾上「重开已打开」再点一次。`
+    );
     return;
   }
   const total = targets.length;
@@ -1019,22 +1090,40 @@ async function startUnfollow(){
   let targets;
   if (rest > 0) {
     const consumed = Math.min(u.done || 0, UF_RUN_TOTAL);
-    UF_QUEUE = UF_QUEUE.slice(consumed);   // 丢掉已完成的
-    targets = UF_QUEUE;
+    let queue = UF_QUEUE.slice(consumed);   // 丢掉已完成的
+    // 期间被锁定的排除掉
+    const lockedSet = new Set(ROWS.filter(r => r.locked).map(r => r.secUid));
+    const before = queue.length;
+    queue = queue.filter(t => !lockedSet.has(t.secUid));
+    if (!queue.length) {
+      alert(
+        before
+          ? '剩余待取关的账号都被锁定了。\n\n请先解锁，或改选其它账号。'
+          : '没有待取关的账号了。'
+      );
+      return;
+    }
+    targets = queue;
+    UF_QUEUE = queue;
     UF_RUN_TOTAL = targets.length;
+    const dropped = before - queue.length;
     if (!confirm(
       `继续取关剩余 ${targets.length} 个账号？\n\n` +
-      `（上一轮已完成 ${consumed} 个）\n` +
+      `（上一轮已完成 ${consumed} 个${dropped ? `，跳过 ${dropped} 个已锁定` : ''}）\n` +
       `· 每个间隔 3~8 秒，每满 10 个再停 10~20 秒\n` +
       `· 命中风控会立即自动停止\n\n` +
       `确定继续？`
     )) return;
   } else {
-    // 全新一批：取关请求实测用 body 里的 user_id 定位目标，uid 与 secUid 都要带上
+    // 全新一批：取关请求实测用 body 里的 user_id 定位目标，uid 与 secUid 都要带上。
+    // selectedRows() 已经排除锁定的，这里再兜一层。
     targets = selectedRows()
-      .filter(r => r.uid || r.secUid)
+      .filter(r => !r.locked && (r.uid || r.secUid))
       .map(r => ({ uid: r.uid || '', secUid: r.secUid || '' }));
-    if (!targets.length) { alert('请先勾选要取关的账号'); return; }
+    if (!targets.length) {
+      alert('请先勾选要取关的账号（锁定的账号不能取关）');
+      return;
+    }
     // 预计耗时 = 平均基础间隔 5.5 秒 × 个数 + 每 10 个一次的额外间隔 15 秒
     const n = targets.length;
     const etaMin = Math.round((n * 5.5 + Math.floor(n / 10) * 15) / 60);
@@ -1068,37 +1157,67 @@ async function stopUnfollow(){
   setTimeout(tick, 400);
 }
 
-// ---- 超期阈值：档位滑杆 + 自定义输入 ----
-// 滑杆 5 等分对应 30/60/90/180/360，拖动即吸附到档位。
-// 线性滑块做不到：30~90 只占 18% 的行程，根本拖不准。
-// 需要 45、500 这类值就走右侧数字框（滑块保持最近档位）。
+// ---- 超期阈值：6 档滑杆（5 个固定档 + 自定义）----
+// 滑杆 6 等分：30 / 60 / 90 / 180 / 360 / 自定义。
+// 数字框输入不在 5 个档位上的值 → 自动跳到「自定义」档；
+// 已经在「自定义」档时，输入恰好等于档位值（如 180）**不跳回去**，
+// 否则输入过程中滑块乱跳，根本没法改。
 const DAY_STEPS = [30, 60, 90, 180, 360];
+const DAY_CUSTOM = 5; // 第 6 档的下标
 
-function syncDayTicks(n){
-  document.querySelectorAll('.dticks span').forEach(s => {
-    s.className = (+s.dataset.d === +n) ? 'on' : '';
-  });
+function clampDays(v) {
+  return Math.max(1, Math.min(3650, +v || 1));
+}
+function daysRangeEl() {
+  return document.getElementById('setDaysRange');
+}
+// keepCustom = true：只更新高亮，不动滑块位置
+function syncDayTicks(n, keepCustom) {
+  const r = daysRangeEl();
   const idx = DAY_STEPS.indexOf(+n);
-  if (idx >= 0) document.getElementById('setDaysRange').value = idx;
+  if (!keepCustom) r.value = (idx >= 0) ? idx : DAY_CUSTOM;
+  const cur = +r.value;
+  document.querySelectorAll('.dticks span').forEach(s => {
+    s.className = (+s.dataset.i === cur) ? 'on' : '';
+  });
 }
-function onDaysRange(i){
-  const n = DAY_STEPS[+i] ?? 60;
-  document.getElementById('setDays').value = n;
-  syncDayTicks(n);
+function onDaysRange(i) {
+  const idx = Math.max(0, Math.min(DAY_CUSTOM, +i || 0));
+  const box = document.getElementById('setDays');
+  if (idx === DAY_CUSTOM) {
+    // 进自定义档：保留输入框原值；空的话给个默认
+    if (!box.value) box.value = 60;
+  } else {
+    box.value = DAY_STEPS[idx];
+  }
+  syncDayTicks(box.value, true);
 }
-function pickDays(n){
-  document.getElementById('setDays').value = n;
-  syncDayTicks(n);
+function pickDays(idx) {
+  daysRangeEl().value = idx;
+  onDaysRange(idx);
 }
-function onDaysInput(v){
-  const n = Math.max(1, Math.min(3650, +v || 1));
-  syncDayTicks(n);
+function onDaysInput(v) {
+  const n = clampDays(v);
+  const r = daysRangeEl();
+  const onCustom = (+r.value === DAY_CUSTOM);
+  const idx = DAY_STEPS.indexOf(n);
+  if (idx < 0) {
+    // 不在档位上 → 跳到自定义
+    r.value = DAY_CUSTOM;
+  } else if (!onCustom) {
+    // 在档位上、且当前不在自定义档 → 跟着跳到对应档
+    // （已在自定义档则保持不动，见上方说明）
+    r.value = idx;
+  }
+  syncDayTicks(n, true);
 }
 function fillSettings(){
   const s = S.settings || {};
   const d = s.staleDays ?? 60;
   document.getElementById('setDays').value = d;
-  syncDayTicks(d);
+  const idx = DAY_STEPS.indexOf(d);
+  daysRangeEl().value = (idx >= 0) ? idx : DAY_CUSTOM;
+  syncDayTicks(d, true);
   document.getElementById('setDir').textContent = (S.settings && S.settings.outDir) || '—';
 
   // 取关请求录制状态

@@ -120,13 +120,78 @@ struct Request {
     body: String,
 }
 
+/// 在字节流里找子串首次出现的位置
+fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+/// 请求头上限：正常也就几 KB，给足余量防滥用
+const MAX_HEAD: usize = 64 * 1024;
+/// 请求体上限：一万个取关目标约 1MB，给 16MB 足够
+const MAX_BODY: usize = 16 * 1024 * 1024;
+
+/// 从 TCP 流里完整读出一个 HTTP 请求。
+///
+/// **不能只 read 一次**：TCP 不保证一次读到完整请求。选中上百个账号时
+/// 请求体有十几 KB，很容易被拆成多个分片。以前只读一次、靠
+/// `split("\r\n\r\n")` 取 body，分片时 body 是残的，JSON 解析失败后
+/// 目标列表变成空数组，界面就报「没有选中任何账号」——
+/// 表现就是有时能取关、有时不能，重试几次又好了。
+fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<(String, String)>> {
+    let mut raw: Vec<u8> = Vec::with_capacity(8192);
+    let mut buf = [0u8; 8192];
+
+    // 1) 先读到 header 结束标记
+    let head_end = loop {
+        if let Some(p) = find_sub(&raw, b"\r\n\r\n") {
+            break p + 4;
+        }
+        if raw.len() > MAX_HEAD {
+            return Ok(None);
+        }
+        let n = stream.read(&mut buf)?;
+        if n == 0 {
+            return Ok(None);
+        }
+        raw.extend_from_slice(&buf[..n]);
+    };
+
+    let head = String::from_utf8_lossy(&raw[..head_end]).to_string();
+    let want: usize = head
+        .split("\r\n")
+        .filter_map(|l| l.split_once(':'))
+        .find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, v)| v.trim().parse::<usize>().ok())
+        .unwrap_or(0)
+        .min(MAX_BODY);
+
+    // 2) 按 Content-Length 把 body 读完（可能还要读好几次）
+    while raw.len() < head_end + want {
+        let n = stream.read(&mut buf)?;
+        if n == 0 {
+            break; // 对端提前关闭，用已收到的部分
+        }
+        raw.extend_from_slice(&buf[..n]);
+        if raw.len() > head_end + MAX_BODY {
+            break;
+        }
+    }
+
+    let body = String::from_utf8_lossy(&raw[head_end..]).to_string();
+    Ok(Some((head, body)))
+}
+
 fn handle(state: Arc<AppState>, mut stream: TcpStream) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(15)))?;
-    let mut buf = vec![0u8; 65536];
-    let n = stream.read(&mut buf)?;
-    let raw = String::from_utf8_lossy(&buf[..n]).to_string();
 
-    let mut lines = raw.split("\r\n");
+    let Some((head, body)) = read_request(&mut stream)? else {
+        return Ok(());
+    };
+
+    let mut lines = head.split("\r\n");
     let first = lines.next().unwrap_or("");
     let mut parts = first.split_whitespace();
     let method = parts.next().unwrap_or("GET").to_string();
@@ -146,8 +211,6 @@ fn handle(state: Arc<AppState>, mut stream: TcpStream) -> std::io::Result<()> {
             headers.push((k.trim().to_ascii_lowercase(), v.trim().to_string()));
         }
     }
-
-    let body = raw.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
 
     // /api/* 一律要求令牌，挡住跨站请求与同机其它程序的误调
     if path.starts_with("/api/") {
@@ -468,6 +531,7 @@ fn route(state: &Arc<AppState>, req: &Request) -> Reply {
             ] {
                 let _ = std::fs::remove_file(out.join(f));
             }
+            state.clear_locked();
             // 3) 可选：清除登录状态（需要重新扫码）
             if also_login {
                 let _ = std::fs::remove_dir_all(out.join("profile"));
@@ -552,9 +616,13 @@ fn route(state: &Arc<AppState>, req: &Request) -> Reply {
         }
 
         ("POST", "/api/unfollow/start") => {
-            let body: Value = serde_json::from_str(&req.body).unwrap_or(json!({}));
+            let body: Value = serde_json::from_str::<Value>(&req.body).unwrap_or_else(|e| {
+                // 解析失败要看得见原因，否则只会表现成「没有选中任何账号」
+                state.log(&format!("取关请求体解析失败（{} 字节）：{e}", req.body.len()), "err");
+                json!({})
+            });
             // 需要同时拿到数字 ID 与 sec_uid：实测取关请求用的是 body 里的 user_id
-            let targets: Vec<(String, String)> = body
+            let picked: Vec<(String, String)> = body
                 .get("targets")
                 .and_then(Value::as_array)
                 .map(|a| {
@@ -567,9 +635,25 @@ fn route(state: &Arc<AppState>, req: &Request) -> Reply {
                         .collect()
                 })
                 .unwrap_or_default();
-            if targets.is_empty() {
-                state.log("取关请求被拒绝：没有选中任何账号", "warn");
+            if picked.is_empty() {
+                state.log(
+                    &format!("取关请求被拒绝：请求里没有账号（body {} 字节）", req.body.len()),
+                    "warn",
+                );
                 return Reply::Json(json!({ "ok": false, "message": "没有选中任何账号" }));
+            }
+            // 锁定的账号不允许取关（前端也会过滤，这里再兜一层）
+            let targets: Vec<(String, String)> = picked
+                .iter()
+                .filter(|(_, sec)| !state.is_locked(sec))
+                .cloned()
+                .collect();
+            if targets.is_empty() {
+                state.log("取关请求被拒绝：选中的账号都被锁定了", "warn");
+                return Reply::Json(json!({
+                    "ok": false,
+                    "message": "选中的账号都被锁定了。请先解锁，或改选其它账号。"
+                }));
             }
             if !state.unfollow_ready() {
                 state.log("取关请求被拒绝：尚未录制取关请求", "warn");
@@ -621,6 +705,18 @@ fn route(state: &Arc<AppState>, req: &Request) -> Reply {
         ("POST", "/api/unfollow/stop") => {
             state.unfollow_stop.store(true, Ordering::SeqCst);
             Reply::Empty
+        }
+
+        // 锁定 / 解锁：锁定的账号不能被勾选、不能被取关
+        ("POST", "/api/lock") => {
+            let body: Value = serde_json::from_str(&req.body).unwrap_or(json!({}));
+            let sec = body.get("secUid").and_then(Value::as_str).unwrap_or("").to_string();
+            if sec.is_empty() {
+                return Reply::Json(json!({ "ok": false, "message": "缺少账号标识" }));
+            }
+            let locked = body.get("locked").and_then(Value::as_bool).unwrap_or(true);
+            let now = state.set_locked(&sec, locked);
+            Reply::Json(json!({ "ok": true, "secUid": sec, "locked": now }))
         }
 
         _ => Reply::Json(json!({ "ok": false, "error": "not found" })),

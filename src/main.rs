@@ -44,6 +44,7 @@ fn main() {
 
     let state = Arc::new(state::AppState::new(cfg, db));
     state.load_settings();
+    state.load_locked();
     state.log("抖音关注清理助手已启动", "ok");
     state.log(&format!("数据目录：{}", state.cfg().out_dir.display()), "");
 
