@@ -82,7 +82,7 @@ Rust + 系统 WebView2 原生桌面应用 · 约 1 MB · 免安装 · 数据不�
 
 ### 方式一：直接下载（最省事）
 
-到 [Releases](../../releases) 下载 `douyin-follow-cleaner-v1.0.0-win64.zip`，解压后得到三个文件：
+到 [Releases](../../releases/latest) 下载最新的 `douyin-follow-cleaner-*-win64.zip`（挑版本号最大的那个），解压后得到三个文件：
 
 ```
 douyin-follow-cleaner.exe
